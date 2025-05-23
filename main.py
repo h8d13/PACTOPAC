@@ -2,7 +2,7 @@
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw, GLib, Gio
 import subprocess
 import threading
 import os
@@ -27,7 +27,9 @@ class PackageManager(Adw.ApplicationWindow):
     def setup_ui(self):
         toolbar_view = Adw.ToolbarView()
         self.set_content(toolbar_view)
-        toolbar_view.add_top_bar(Adw.HeaderBar())
+        
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
         
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_margin_top(12)
@@ -44,10 +46,19 @@ class PackageManager(Adw.ApplicationWindow):
         # Buttons
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, homogeneous=True)
         
-        self.info_btn = self.create_button("Info", False, self.show_package_info)
-        self.install_btn = self.create_button("Install", False, lambda _: self.run_cmd(['pacman', '-S', '--noconfirm', self.selected]), "suggested-action")
-        self.remove_btn = self.create_button("Remove", False, lambda _: self.run_cmd(['pacman', '-R', '--noconfirm', self.selected]), "destructive-action")
-        update_btn = self.create_button("Update System", True, lambda _: self.run_cmd(['pacman', '-Syu']))
+        self.info_btn = Gtk.Button(label="Info", sensitive=False)
+        self.info_btn.connect("clicked", self.show_package_info)
+        
+        self.install_btn = Gtk.Button(label="Install", sensitive=False)
+        self.install_btn.add_css_class("suggested-action")
+        self.install_btn.connect("clicked", lambda _: self.run_cmd(['pacman', '-S', '--noconfirm', self.selected]))
+        
+        self.remove_btn = Gtk.Button(label="Remove", sensitive=False)
+        self.remove_btn.add_css_class("destructive-action")
+        self.remove_btn.connect("clicked", lambda _: self.run_cmd(['pacman', '-R', '--noconfirm', self.selected]))
+        
+        update_btn = Gtk.Button(label="Update System")
+        update_btn.connect("clicked", lambda _: self.run_cmd(['pacman', '-Syu']))
         
         for btn in [self.info_btn, self.install_btn, self.remove_btn, update_btn]:
             btn_box.append(btn)
@@ -65,13 +76,6 @@ class PackageManager(Adw.ApplicationWindow):
         self.status = Gtk.Label(label="Loading packages...")
         self.status.add_css_class("dim-label")
         box.append(self.status)
-    
-    def create_button(self, label, sensitive, callback, css_class=None):
-        btn = Gtk.Button(label=label, sensitive=sensitive)
-        btn.connect("clicked", callback)
-        if css_class:
-            btn.add_css_class(css_class)
-        return btn
     
     def load_packages(self):
         def load():
@@ -108,6 +112,7 @@ class PackageManager(Adw.ApplicationWindow):
         
         for name, repo, installed in filtered:
             row = Gtk.ListBoxRow()
+            
             box = Gtk.Box(spacing=12)
             box.set_margin_top(6)
             box.set_margin_bottom(6)
@@ -117,13 +122,14 @@ class PackageManager(Adw.ApplicationWindow):
             status_icon = Gtk.Label(label="●" if installed else "○", width_request=20)
             if installed:
                 status_icon.add_css_class("success")
+            box.append(status_icon)
             
             name_label = Gtk.Label(label=name, halign=Gtk.Align.START, hexpand=True)
+            box.append(name_label)
+            
             repo_label = Gtk.Label(label=repo)
             repo_label.add_css_class("dim-label")
-            
-            for widget in [status_icon, name_label, repo_label]:
-                box.append(widget)
+            box.append(repo_label)
             
             row.set_child(box)
             row.pkg_data = (name, installed)
@@ -137,10 +143,12 @@ class PackageManager(Adw.ApplicationWindow):
             self.install_btn.set_sensitive(not installed)
             self.remove_btn.set_sensitive(installed)
         else:
-            for btn in [self.info_btn, self.install_btn, self.remove_btn]:
-                btn.set_sensitive(False)
+            self.info_btn.set_sensitive(False)
+            self.install_btn.set_sensitive(False)
+            self.remove_btn.set_sensitive(False)
     
     def show_package_info(self, button):
+        """Show detailed package information"""
         if not self.selected:
             return
             
@@ -149,72 +157,114 @@ class PackageManager(Adw.ApplicationWindow):
         dialog.set_default_size(600, 500)
         
         toolbar_view = Adw.ToolbarView()
-        toolbar_view.add_top_bar(Adw.HeaderBar())
+        header = Adw.HeaderBar()
+        
+        toolbar_view.add_top_bar(header)
         dialog.set_content(toolbar_view)
         
         # Loading state
+        spinner = Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+        loading_label = Gtk.Label(label="Loading package information...")
         loading_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, 
                              halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
-        loading_box.append(Gtk.Spinner(spinning=True))
-        loading_box.append(Gtk.Label(label="Loading package information..."))
+        loading_box.append(spinner)
+        loading_box.append(loading_label)
+        
         toolbar_view.set_content(loading_box)
         dialog.present()
         
         def load_info():
             try:
-                for cmd in [['pacman', '-Si', self.selected], ['pacman', '-Qi', self.selected]]:
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    if result.stdout.strip():
-                        GLib.idle_add(self.display_package_info, toolbar_view, result.stdout)
-                        return
-                GLib.idle_add(self.display_package_info, toolbar_view, f"Could not retrieve information for package '{self.selected}'")
-            except Exception:
-                GLib.idle_add(self.display_package_info, toolbar_view, f"Error retrieving package info")
+                # Get package info
+                result = subprocess.run(['pacman', '-Si', self.selected], 
+                                      capture_output=True, text=True, check=True)
+                info_text = result.stdout
+                
+                # If not in repos, try installed packages
+                if not info_text.strip():
+                    result = subprocess.run(['pacman', '-Qi', self.selected], 
+                                          capture_output=True, text=True, check=True)
+                    info_text = result.stdout
+                
+                GLib.idle_add(self.display_package_info, dialog, toolbar_view, info_text)
+                
+            except subprocess.CalledProcessError:
+                error_text = f"Could not retrieve information for package '{self.selected}'"
+                GLib.idle_add(self.display_package_info, dialog, toolbar_view, error_text)
         
         threading.Thread(target=load_info, daemon=True).start()
     
-    def display_package_info(self, toolbar_view, info_text):
+    def display_package_info(self, dialog, toolbar_view, info_text):
+        """Display the package information in a formatted way"""
+        # Create scrollable content
         scroll = Gtk.ScrolledWindow(vexpand=True)
         scroll.set_margin_top(12)
         scroll.set_margin_bottom(12)
         scroll.set_margin_start(12)
         scroll.set_margin_end(12)
         
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        # Parse and format the package info
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         
-        if "Could not retrieve" in info_text or "Error" in info_text:
+        if "Could not retrieve" in info_text:
+            # Error case
             error_label = Gtk.Label(label=info_text, halign=Gtk.Align.CENTER)
             error_label.add_css_class("dim-label")
             content_box.append(error_label)
         else:
-            for line in info_text.strip().split('\n'):
+            # Parse package info
+            lines = info_text.strip().split('\n')
+            for line in lines:
                 if ':' in line and not line.startswith(' '):
                     key, value = line.split(':', 1)
-                    key, value = key.strip(), value.strip()
+                    key = key.strip()
+                    value = value.strip()
                     
+                    # Create info row
                     row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+                    row_box.set_margin_top(3)
+                    row_box.set_margin_bottom(3)
                     
+                    # Key label (bold)
                     key_label = Gtk.Label(label=key, halign=Gtk.Align.START)
                     key_label.set_markup(f"<b>{key}</b>")
                     key_label.set_size_request(120, -1)
+                    row_box.append(key_label)
                     
+                    # Value label (selectable for copying)
                     value_label = Gtk.Label(label=value, halign=Gtk.Align.START, 
                                           hexpand=True, wrap=True, selectable=True)
                     
-                    row_box.append(key_label)
+                    # Special styling for certain fields
+                    if key.lower() in ['name', 'version']:
+                        value_label.set_markup(f"<tt>{value}</tt>")
+                    elif key.lower() == 'description':
+                        value_label.add_css_class("dim-label")
+                    
                     row_box.append(value_label)
                     content_box.append(row_box)
+                    
+                    # Add separator for readability
+                    if key.lower() in ['version', 'description', 'dependencies']:
+                        separator = Gtk.Separator()
+                        separator.set_margin_top(6)
+                        separator.set_margin_bottom(6)
+                        content_box.append(separator)
         
         scroll.set_child(content_box)
         toolbar_view.set_content(scroll)
+        
         return False
     
     def run_cmd(self, cmd):
-        dialog = Adw.Window(title=f"Running: {' '.join(cmd)}", transient_for=self, modal=True)
+        dialog = Adw.Window(title=f"Running: {' '.join(cmd)}", 
+                           transient_for=self, modal=True)
         dialog.set_default_size(600, 400)
         
         toolbar_view = Adw.ToolbarView()
-        toolbar_view.add_top_bar(Adw.HeaderBar())
+        header = Adw.HeaderBar()
+        
+        toolbar_view.add_top_bar(header)
         dialog.set_content(toolbar_view)
         
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -223,39 +273,73 @@ class PackageManager(Adw.ApplicationWindow):
         content_box.set_margin_start(12)
         content_box.set_margin_end(12)
         
-        progress = Gtk.ProgressBar(show_text=True, text="Starting...")
-        text = Gtk.TextView(editable=False, monospace=True)
-        scroll = Gtk.ScrolledWindow(vexpand=True)
-        scroll.set_child(text)
-        
+        progress = Gtk.ProgressBar()
+        progress.set_show_text(True)
+        progress.set_text("Starting...")
         content_box.append(progress)
+        
+        scroll = Gtk.ScrolledWindow(vexpand=True)
+        text = Gtk.TextView(editable=False, monospace=True)
+        scroll.set_child(text)
         content_box.append(scroll)
+        
         toolbar_view.set_content(content_box)
         dialog.present()
         
+        def auto_scroll():
+            buf = text.get_buffer()
+            end_iter = buf.get_end_iter()
+            mark = buf.get_insert()
+            buf.place_cursor(end_iter)
+            text.scroll_mark_onscreen(mark)
+            return False
+        
+        def pulse_progress():
+            progress.pulse()
+            return True
+        
         def run():
             try:
-                pulse_id = GLib.timeout_add(100, lambda: progress.pulse() or True)
+                pulse_id = GLib.timeout_add(100, pulse_progress)
+                
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                       universal_newlines=True, bufsize=1)
                 buf = text.get_buffer()
                 
+                GLib.idle_add(lambda: progress.set_text("Running command..."))
+                
                 for line in iter(proc.stdout.readline, ''):
-                    GLib.idle_add(lambda l=line: buf.insert(buf.get_end_iter(), l))
+                    def add_line(l=line):
+                        buf.insert(buf.get_end_iter(), l)
+                        GLib.idle_add(auto_scroll)
+                        return False
+                    GLib.idle_add(add_line)
                 
                 proc.wait()
                 GLib.source_remove(pulse_id)
                 
-                result = f"\n{'✓ Command completed successfully' if proc.returncode == 0 else f'✗ Command failed (exit code {proc.returncode})'}"
-                GLib.idle_add(lambda: buf.insert(buf.get_end_iter(), result))
-                
                 if proc.returncode == 0:
+                    result = "\n✓ Command completed successfully"
+                    GLib.idle_add(lambda: progress.set_fraction(1.0))
+                    GLib.idle_add(lambda: progress.set_text("Completed successfully"))
+                    GLib.idle_add(lambda: progress.add_css_class("success"))
                     GLib.idle_add(self.load_packages)
+                else:
+                    result = f"\n✗ Command failed (exit code {proc.returncode})"
+                    GLib.idle_add(lambda: progress.set_fraction(1.0))
+                    GLib.idle_add(lambda: progress.set_text("Command failed"))
+                    GLib.idle_add(lambda: progress.add_css_class("error"))
+                
+                GLib.idle_add(lambda: buf.insert(buf.get_end_iter(), result))
+                GLib.idle_add(auto_scroll)
                     
             except Exception as e:
                 if 'pulse_id' in locals():
                     GLib.source_remove(pulse_id)
+                GLib.idle_add(lambda: progress.set_text("Error occurred"))
+                GLib.idle_add(lambda: progress.add_css_class("error"))
                 GLib.idle_add(lambda: buf.insert(buf.get_end_iter(), f"\nError: {e}"))
+                GLib.idle_add(auto_scroll)
         
         threading.Thread(target=run, daemon=True).start()
 
@@ -264,9 +348,13 @@ class App(Adw.Application):
         super().__init__(application_id="org.suckless.pacman")
         
     def do_activate(self):
-        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
-        PackageManager(self).present()
+        style_manager = Adw.StyleManager.get_default()
+        style_manager.set_color_scheme(Adw.ColorScheme.PREFER_DARK)
+        
+        win = PackageManager(self)
+        win.present()
 
 if __name__ == "__main__":
     Adw.init()
-    App().run(sys.argv)
+    app = App()
+    app.run(sys.argv)
