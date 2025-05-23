@@ -57,7 +57,7 @@ class PackageManager(Adw.ApplicationWindow):
         self.remove_btn.add_css_class("destructive-action")
         self.remove_btn.connect("clicked", lambda _: self.run_cmd(['pacman', '-R', '--noconfirm', self.selected]))
         
-        update_btn = Gtk.Button(label="Update System")
+        update_btn = Gtk.Button(label="Update")
         update_btn.connect("clicked", lambda _: self.run_cmd(['pacman', '-Syu']))
         
         for btn in [self.info_btn, self.install_btn, self.remove_btn, update_btn]:
