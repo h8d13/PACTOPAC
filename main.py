@@ -447,7 +447,11 @@ class App(Adw.Application):
         
     def do_activate(self):
         Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
-        PackageManager(self).present()
+        window = PackageManager(self)
+        
+        window.set_icon_name("package-x-generic")
+            
+        window.present()
 
 if __name__ == "__main__":
     Adw.init()
