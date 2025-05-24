@@ -127,6 +127,14 @@ class PkgMan(Adw.ApplicationWindow):
         except (FileNotFoundError, IOError):
             return 'All Countries'
     
+    def on_theme_toggle(self, switch_row, param):
+        """Handle theme toggle switch"""
+        style_manager = Adw.StyleManager.get_default()
+        if switch_row.get_active():
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+        else:
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+    
     def show_settings(self, button):
         dialog = Adw.PreferencesDialog()
         dialog.set_title("Settings")
@@ -168,6 +176,7 @@ class PkgMan(Adw.ApplicationWindow):
                 countries = [(country["name"], country["code"]) for country in countries_data["countries"]]
         except FileNotFoundError:
             print("Missing json file")
+            countries = [("All Countries", "all")]
 
         for name, code in countries:
             country_model.append(name)
@@ -227,14 +236,31 @@ class PkgMan(Adw.ApplicationWindow):
         about_page = Adw.PreferencesPage(title="About", icon_name="help-about-symbolic")
         dialog.add(about_page)
         
+        # App info group
         about_group = Adw.PreferencesGroup()
         about_page.add(about_group)
         
         app_row = Adw.ActionRow(title="PacToPac", subtitle="Suckless Arch Linux package manager")
         about_group.add(app_row)
         
-        version_row = Adw.ActionRow(title="Version", subtitle="1.0.0")
+        version_row = Adw.ActionRow(title="Version", subtitle="1.0.1")
         about_group.add(version_row)
+        
+        # Appearance group with theme toggle
+        appearance_group = Adw.PreferencesGroup(title="Appearance", description="Customize the look and feel")
+        about_page.add(appearance_group)
+        
+        # Get current theme state
+        style_manager = Adw.StyleManager.get_default()
+        is_light = style_manager.get_color_scheme() == Adw.ColorScheme.FORCE_LIGHT
+        
+        theme_row = Adw.SwitchRow(
+            title="Light Theme",
+            subtitle="Switch between light and dark appearance"
+        )
+        theme_row.set_active(is_light)
+        theme_row.connect("notify::active", self.on_theme_toggle)
+        appearance_group.add(theme_row)
         
         dialog.present(self)
     
