@@ -10,7 +10,7 @@ import sys
 import re
 import urllib.request
 
-class PackageManager(Adw.ApplicationWindow):
+class PkgMan(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app)
         self.set_title("PacToPac")
@@ -62,7 +62,7 @@ class PackageManager(Adw.ApplicationWindow):
         update_btn = Gtk.Button(label="Update", sensitive=True)
         update_btn.connect("clicked", self.handle_update)
         
-        for btn in [self.info_btn, update_btn, self.action_btn]:
+        for btn in [update_btn, self.info_btn, self.action_btn]:
             btn_box.append(btn)
         box.append(btn_box)
         
@@ -90,10 +90,10 @@ class PackageManager(Adw.ApplicationWindow):
         except:
             return False
     
-    def check_flatpak_available(self):
+    def check_fp(self):
         return self.check_cmd(['flatpak', '--version'])
     
-    def check_flathub_enabled(self):
+    def check_fh(self):
         try:
             result = subprocess.run(['flatpak', 'remotes'], capture_output=True, text=True, check=True)
             # Check if flathub exists and is not disabled
@@ -203,13 +203,13 @@ class PackageManager(Adw.ApplicationWindow):
         flatpak_group = Adw.PreferencesGroup(title="Flatpak Configuration", description="Universal application packages")
         flatpak_page.add(flatpak_group)
         
-        if self.check_flatpak_available():
+        if self.check_fp():
             flathub_row = Adw.SwitchRow(
                 title="Flathub Repository", 
                 subtitle="Enable access to thousands of applications via Flatpak"
             )
-            flathub_row.set_active(self.check_flathub_enabled())
-            flathub_row.connect("notify::active", self.on_flathub_toggle)
+            flathub_row.set_active(self.check_fh())
+            flathub_row.connect("notify::active", self.on_fh_toggle)
             flatpak_group.add(flathub_row)
         else:
             unavailable_row = Adw.ActionRow(
@@ -286,7 +286,7 @@ class PackageManager(Adw.ApplicationWindow):
         else:
             self.run_toggle(False, None, ['sed', '-i', '/^\\[multilib\\]/{s/^/#/;n;s/^/#/}', '/etc/pacman.conf'])
     
-    def on_flathub_toggle(self, switch_row, param):
+    def on_fh_toggle(self, switch_row, param):
         enabled = switch_row.get_active()
         if enabled:
             # Always try to add first (handles both missing and disabled cases)
@@ -314,7 +314,7 @@ class PackageManager(Adw.ApplicationWindow):
                             packages.append((parts[1], parts[0], parts[1] in installed, "pacman"))
                 
                 # Load flatpak packages
-                if self.check_flatpak_available() and self.check_flathub_enabled():
+                if self.check_fp() and self.check_fh():
                     try:
                         available = subprocess.run(['flatpak', 'remote-ls', '--app', 'flathub'], capture_output=True, text=True, check=True)
                         installed_fps = subprocess.run(['flatpak', 'list', '--app'], capture_output=True, text=True, check=True)
@@ -573,7 +573,7 @@ class App(Adw.Application):
         
     def do_activate(self):
         Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
-        window = PackageManager(self)
+        window = PkgMan(self)
         window.set_icon_name("package-x-generic")
         window.present()
 
