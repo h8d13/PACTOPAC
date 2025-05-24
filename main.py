@@ -2,11 +2,12 @@
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib, Gio
+from gi.repository import Gtk, Adw, GLib
 import subprocess
 import threading
 import os
 import sys
+import re
 
 class PackageManager(Adw.ApplicationWindow):
     def __init__(self, app):
@@ -25,12 +26,18 @@ class PackageManager(Adw.ApplicationWindow):
         self.load_packages()
     
     def setup_ui(self):
+        # Main layout
         toolbar_view = Adw.ToolbarView()
         self.set_content(toolbar_view)
         
+        # Header with settings
         header = Adw.HeaderBar()
+        settings_btn = Gtk.Button(icon_name="preferences-system-symbolic", tooltip_text="Settings")
+        settings_btn.connect("clicked", self.show_settings)
+        header.pack_start(settings_btn)
         toolbar_view.add_top_bar(header)
         
+        # Content box
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_margin_top(12)
         box.set_margin_bottom(12)
@@ -43,22 +50,13 @@ class PackageManager(Adw.ApplicationWindow):
         self.search.connect("search-changed", lambda _: self.refresh_list())
         box.append(self.search)
         
-        # Buttons
+        # Action buttons
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, homogeneous=True)
         
-        self.info_btn = Gtk.Button(label="Info", sensitive=False)
-        self.info_btn.connect("clicked", self.show_package_info)
-        
-        self.install_btn = Gtk.Button(label="Install", sensitive=False)
-        self.install_btn.add_css_class("suggested-action")
-        self.install_btn.connect("clicked", lambda _: self.run_cmd(['pacman', '-S', '--noconfirm', self.selected]))
-        
-        self.remove_btn = Gtk.Button(label="Remove", sensitive=False)
-        self.remove_btn.add_css_class("destructive-action")
-        self.remove_btn.connect("clicked", lambda _: self.run_cmd(['pacman', '-R', '--noconfirm', self.selected]))
-        
-        update_btn = Gtk.Button(label="Update")
-        update_btn.connect("clicked", lambda _: self.run_cmd(['pacman', '-Syu']))
+        self.info_btn = self.create_button("Info", False, self.show_package_info)
+        self.install_btn = self.create_button("Install", False, self.handle_install, "suggested-action")
+        self.remove_btn = self.create_button("Remove", False, self.handle_remove, "destructive-action")
+        update_btn = self.create_button("Update", True, self.handle_update)
         
         for btn in [self.info_btn, self.install_btn, self.remove_btn, update_btn]:
             btn_box.append(btn)
@@ -73,23 +71,145 @@ class PackageManager(Adw.ApplicationWindow):
         scroll.set_child(self.list)
         box.append(scroll)
         
+        # Status
         self.status = Gtk.Label(label="Loading packages...")
         self.status.add_css_class("dim-label")
         box.append(self.status)
     
+    def create_button(self, label, sensitive, callback, css_class=None):
+        btn = Gtk.Button(label=label, sensitive=sensitive)
+        btn.connect("clicked", callback)
+        if css_class:
+            btn.add_css_class(css_class)
+        return btn
+    
+    def check_flatpak_available(self):
+        try:
+            subprocess.run(['flatpak', '--version'], capture_output=True, check=True)
+            return True
+        except:
+            return False
+    
+    def check_flathub_enabled(self):
+        try:
+            result = subprocess.run(['flatpak', 'remotes'], capture_output=True, text=True, check=True)
+            return 'flathub' in result.stdout.lower()
+        except:
+            return False
+    
+    def check_multilib_enabled(self):
+        try:
+            with open('/etc/pacman.conf', 'r') as f:
+                return bool(re.search(r'^\[multilib\]', f.read(), re.MULTILINE))
+        except:
+            return False
+    
+    def show_settings(self, button):
+        dialog = Adw.PreferencesWindow(title="Settings", transient_for=self, modal=True)
+        dialog.set_default_size(500, 400)
+        
+        page = Adw.PreferencesPage(title="General", icon_name="preferences-system-symbolic")
+        dialog.add(page)
+        
+        # Repository settings
+        repo_group = Adw.PreferencesGroup(title="Repository Settings")
+        page.add(repo_group)
+        
+        # Multilib
+        multilib_row = Adw.SwitchRow(
+            title="Enable multilib repository", 
+            subtitle="Access to 32-bit packages"
+        )
+        multilib_row.set_active(self.check_multilib_enabled())
+        multilib_row.connect("notify::active", self.on_multilib_toggle)
+        repo_group.add(multilib_row)
+        
+        # Flatpak
+        flatpak_group = Adw.PreferencesGroup(title="Flatpak Settings")
+        page.add(flatpak_group)
+        
+        if self.check_flatpak_available():
+            flathub_row = Adw.SwitchRow(
+                title="Enable Flathub repository", 
+                subtitle="Access to Flatpak applications"
+            )
+            flathub_row.set_active(self.check_flathub_enabled())
+            flathub_row.connect("notify::active", self.on_flathub_toggle)
+            flatpak_group.add(flathub_row)
+        else:
+            info_row = Adw.ActionRow(
+                title="Flatpak not available", 
+                subtitle="Install flatpak to enable support"
+            )
+            flatpak_group.add(info_row)
+        
+        dialog.present()
+    
+    def toggle_setting(self, enabled, enable_cmd, disable_cmd, reload=True):
+        def run():
+            try:
+                subprocess.run(enable_cmd if enabled else disable_cmd, check=True)
+                if reload:
+                    GLib.idle_add(self.load_packages)
+            except subprocess.CalledProcessError as e:
+                print(f"Toggle error: {e}")
+        threading.Thread(target=run, daemon=True).start()
+    
+    def on_multilib_toggle(self, switch_row, param):
+        enabled = switch_row.get_active()
+        if enabled:
+            self.toggle_setting(True, 
+                ['sed', '-i', '/^#\\[multilib\\]/{s/^#//;n;s/^#//}', '/etc/pacman.conf'],
+                None)
+            subprocess.run(['pacman', '-Sy'], check=True)
+        else:
+            self.toggle_setting(False, None,
+                ['sed', '-i', '/^\\[multilib\\]/{s/^/#/;n;s/^/#/}', '/etc/pacman.conf'])
+    
+    def on_flathub_toggle(self, switch_row, param):
+        enabled = switch_row.get_active()
+        if enabled:
+            self.toggle_setting(True,
+                ['flatpak', 'remote-add', '--if-not-exists', 'flathub',
+                 'https://dl.flathub.org/repo/flathub.flatpakrepo'],
+                None)
+        else:
+            GLib.idle_add(self.load_packages)  # Just reload without flathub
+    
     def load_packages(self):
         def load():
             try:
+                packages = []
+                
+                # Pacman packages
                 all_pkgs = subprocess.run(['pacman', '-Sl'], capture_output=True, text=True, check=True)
                 installed = {line.split()[0] for line in 
-                           subprocess.run(['pacman', '-Q'], capture_output=True, text=True, check=True).stdout.split('\n') if line}
+                           subprocess.run(['pacman', '-Q'], capture_output=True, text=True).stdout.split('\n') if line}
                 
-                packages = []
                 for line in all_pkgs.stdout.split('\n'):
                     if line:
                         parts = line.split(' ', 2)
                         if len(parts) >= 2:
-                            packages.append((parts[1], parts[0], parts[1] in installed))
+                            packages.append((parts[1], f"{parts[0]}", parts[1] in installed, "pacman"))
+                
+                # Flatpak packages
+                if self.check_flatpak_available() and self.check_flathub_enabled():
+                    try:
+                        available = subprocess.run(['flatpak', 'remote-ls', '--app', 'flathub'], 
+                                                 capture_output=True, text=True, check=True)
+                        installed_fps = subprocess.run(['flatpak', 'list', '--app'], 
+                                                     capture_output=True, text=True, check=True)
+                        
+                        installed_ids = {line.split('\t')[1] for line in installed_fps.stdout.split('\n') 
+                                       if line.strip() and len(line.split('\t')) > 1}
+                        
+                        for line in available.stdout.split('\n'):
+                            if line.strip():
+                                parts = line.split('\t')
+                                if len(parts) >= 3:
+                                    packages.append((parts[0], "flathub", parts[1] in installed_ids, "flatpak", parts[1]))
+                    except subprocess.CalledProcessError:
+                        pass
                 
                 GLib.idle_add(self.update_list, packages)
             except Exception as e:
@@ -100,171 +220,170 @@ class PackageManager(Adw.ApplicationWindow):
     def update_list(self, packages):
         self.packages = packages
         self.refresh_list()
-        self.status.set_text(f"{len(packages)} packages")
+        
+        # Count packages
+        total_installed = sum(1 for pkg in packages if pkg[2])
+        flatpak_installed = sum(1 for pkg in packages if pkg[2] and len(pkg) > 3 and pkg[3] == "flatpak")
+        
+        if flatpak_installed > 0:
+            self.status.set_text(f"{total_installed} installed ({flatpak_installed} flatpak) / {len(packages)} available")
+        else:
+            self.status.set_text(f"{total_installed} installed / {len(packages)} packages")
+        
         return False
     
     def refresh_list(self):
+        # Clear list
         while child := self.list.get_first_child():
             self.list.remove(child)
         
+        # Filter and add packages
         search_text = self.search.get_text().lower()
         filtered = [p for p in self.packages if search_text in p[0].lower()][:500]
         
-        for name, repo, installed in filtered:
-            row = Gtk.ListBoxRow()
+        for pkg_data in filtered:
+            name, repo, installed, pkg_type = pkg_data[0], pkg_data[1], pkg_data[2], pkg_data[3]
             
+            row = Gtk.ListBoxRow()
             box = Gtk.Box(spacing=12)
             box.set_margin_top(6)
             box.set_margin_bottom(6)
             box.set_margin_start(12)
             box.set_margin_end(12)
             
-            status_icon = Gtk.Label(label="●" if installed else "○", width_request=20)
+            # Status icon
+            icon = Gtk.Label(label="●" if installed else "○", width_request=20)
             if installed:
-                status_icon.add_css_class("success")
-            box.append(status_icon)
+                icon.add_css_class("success")
+            box.append(icon)
             
+            # Package name
             name_label = Gtk.Label(label=name, halign=Gtk.Align.START, hexpand=True)
             box.append(name_label)
             
+            # Repository
             repo_label = Gtk.Label(label=repo)
             repo_label.add_css_class("dim-label")
+            if pkg_type == "flatpak":
+                repo_label.add_css_class("accent")
             box.append(repo_label)
             
             row.set_child(box)
-            row.pkg_data = (name, installed)
+            row.pkg_data = pkg_data
             self.list.append(row)
     
     def on_select(self, listbox, row):
         if row:
-            name, installed = row.pkg_data
-            self.selected = name
+            self.selected = row.pkg_data
+            installed = self.selected[2]
             self.info_btn.set_sensitive(True)
             self.install_btn.set_sensitive(not installed)
             self.remove_btn.set_sensitive(installed)
         else:
-            self.info_btn.set_sensitive(False)
-            self.install_btn.set_sensitive(False)
-            self.remove_btn.set_sensitive(False)
+            self.selected = None
+            for btn in [self.info_btn, self.install_btn, self.remove_btn]:
+                btn.set_sensitive(False)
     
-    def show_package_info(self, button):
-        """Show detailed package information"""
+    def handle_install(self, button):
         if not self.selected:
             return
-            
-        dialog = Adw.Window(title=f"Package Info: {self.selected}", 
-                           transient_for=self, modal=True)
+        
+        pkg_type = self.selected[3]
+        if pkg_type == "flatpak":
+            self.run_cmd(['flatpak', 'install', '-y', 'flathub', self.selected[4]])
+        else:
+            self.run_cmd(['pacman', '-S', '--noconfirm', self.selected[0]])
+    
+    def handle_remove(self, button):
+        if not self.selected:
+            return
+        
+        pkg_type = self.selected[3]
+        if pkg_type == "flatpak":
+            self.run_cmd(['flatpak', 'uninstall', '-y', self.selected[4]])
+        else:
+            self.run_cmd(['pacman', '-R', '--noconfirm', self.selected[0]])
+    
+    def handle_update(self, button):
+        self.run_cmd(['pacman', '-Syuu', '--noconfirm'])
+    
+    def show_package_info(self, button):
+        if not self.selected:
+            return
+        
+        pkg_name, pkg_type = self.selected[0], self.selected[3]
+        
+        dialog = Adw.Window(title=f"Info: {pkg_name}", transient_for=self, modal=True)
         dialog.set_default_size(600, 500)
         
+        # Setup dialog
         toolbar_view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        
-        toolbar_view.add_top_bar(header)
+        toolbar_view.add_top_bar(Adw.HeaderBar())
         dialog.set_content(toolbar_view)
         
-        # Loading state
-        spinner = Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
-        loading_label = Gtk.Label(label="Loading package information...")
-        loading_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, 
+        # Loading spinner
+        spinner = Gtk.Spinner(spinning=True)
+        loading_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                              halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
         loading_box.append(spinner)
-        loading_box.append(loading_label)
-        
+        loading_box.append(Gtk.Label(label="Loading..."))
         toolbar_view.set_content(loading_box)
         dialog.present()
         
         def load_info():
             try:
-                # Get package info
-                result = subprocess.run(['pacman', '-Si', self.selected], 
-                                      capture_output=True, text=True, check=True)
-                info_text = result.stdout
-                
-                # If not in repos, try installed packages
-                if not info_text.strip():
-                    result = subprocess.run(['pacman', '-Qi', self.selected], 
+                if pkg_type == "flatpak":
+                    result = subprocess.run(['flatpak', 'info', self.selected[4]], 
                                           capture_output=True, text=True, check=True)
-                    info_text = result.stdout
+                else:
+                    result = subprocess.run(['pacman', '-Si', pkg_name], 
+                                          capture_output=True, text=True, check=True)
+                    if not result.stdout.strip():
+                        result = subprocess.run(['pacman', '-Qi', pkg_name], 
+                                              capture_output=True, text=True, check=True)
                 
-                GLib.idle_add(self.display_package_info, dialog, toolbar_view, info_text)
-                
+                GLib.idle_add(self.display_info, toolbar_view, result.stdout)
             except subprocess.CalledProcessError:
-                error_text = f"Could not retrieve information for package '{self.selected}'"
-                GLib.idle_add(self.display_package_info, dialog, toolbar_view, error_text)
+                GLib.idle_add(self.display_info, toolbar_view, f"No info available for {pkg_name}")
         
         threading.Thread(target=load_info, daemon=True).start()
     
-    def display_package_info(self, dialog, toolbar_view, info_text):
-        """Display the package information in a formatted way"""
-        # Create scrollable content
+    def display_info(self, toolbar_view, info_text):
         scroll = Gtk.ScrolledWindow(vexpand=True)
         scroll.set_margin_top(12)
         scroll.set_margin_bottom(12)
         scroll.set_margin_start(12)
         scroll.set_margin_end(12)
         
-        # Parse and format the package info
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         
-        if "Could not retrieve" in info_text:
-            # Error case
-            error_label = Gtk.Label(label=info_text, halign=Gtk.Align.CENTER)
-            error_label.add_css_class("dim-label")
-            content_box.append(error_label)
-        else:
-            # Parse package info
-            lines = info_text.strip().split('\n')
-            for line in lines:
-                if ':' in line and not line.startswith(' '):
-                    key, value = line.split(':', 1)
-                    key = key.strip()
-                    value = value.strip()
-                    
-                    # Create info row
-                    row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-                    row_box.set_margin_top(3)
-                    row_box.set_margin_bottom(3)
-                    
-                    # Key label (bold)
-                    key_label = Gtk.Label(label=key, halign=Gtk.Align.START)
-                    key_label.set_markup(f"<b>{key}</b>")
-                    key_label.set_size_request(120, -1)
-                    row_box.append(key_label)
-                    
-                    # Value label (selectable for copying)
-                    value_label = Gtk.Label(label=value, halign=Gtk.Align.START, 
-                                          hexpand=True, wrap=True, selectable=True)
-                    
-                    # Special styling for certain fields
-                    if key.lower() in ['name', 'version']:
-                        value_label.set_markup(f"<tt>{value}</tt>")
-                    elif key.lower() == 'description':
-                        value_label.add_css_class("dim-label")
-                    
-                    row_box.append(value_label)
-                    content_box.append(row_box)
-                    
-                    # Add separator for readability
-                    if key.lower() in ['version', 'description', 'dependencies']:
-                        separator = Gtk.Separator()
-                        separator.set_margin_top(6)
-                        separator.set_margin_bottom(6)
-                        content_box.append(separator)
+        # Parse info
+        for line in info_text.strip().split('\n'):
+            if ':' in line and not line.startswith(' '):
+                key, value = line.split(':', 1)
+                
+                row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+                key_label = Gtk.Label(label=key.strip(), halign=Gtk.Align.START)
+                key_label.set_markup(f"<b>{key.strip()}</b>")
+                key_label.set_size_request(100, -1)
+                
+                value_label = Gtk.Label(label=value.strip(), halign=Gtk.Align.START, 
+                                      hexpand=True, wrap=True, selectable=True)
+                
+                row_box.append(key_label)
+                row_box.append(value_label)
+                content_box.append(row_box)
         
         scroll.set_child(content_box)
         toolbar_view.set_content(scroll)
-        
         return False
     
     def run_cmd(self, cmd):
-        dialog = Adw.Window(title=f"Running: {' '.join(cmd)}", 
-                           transient_for=self, modal=True)
+        dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
         dialog.set_default_size(600, 400)
         
         toolbar_view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        
-        toolbar_view.add_top_bar(header)
+        toolbar_view.add_top_bar(Adw.HeaderBar())
         dialog.set_content(toolbar_view)
         
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -273,9 +392,7 @@ class PackageManager(Adw.ApplicationWindow):
         content_box.set_margin_start(12)
         content_box.set_margin_end(12)
         
-        progress = Gtk.ProgressBar()
-        progress.set_show_text(True)
-        progress.set_text("Starting...")
+        progress = Gtk.ProgressBar(show_text=True, text="Starting...")
         content_box.append(progress)
         
         scroll = Gtk.ScrolledWindow(vexpand=True)
@@ -286,60 +403,38 @@ class PackageManager(Adw.ApplicationWindow):
         toolbar_view.set_content(content_box)
         dialog.present()
         
-        def auto_scroll():
-            buf = text.get_buffer()
-            end_iter = buf.get_end_iter()
-            mark = buf.get_insert()
-            buf.place_cursor(end_iter)
-            text.scroll_mark_onscreen(mark)
-            return False
-        
-        def pulse_progress():
-            progress.pulse()
-            return True
-        
         def run():
             try:
-                pulse_id = GLib.timeout_add(100, pulse_progress)
+                pulse_id = GLib.timeout_add(100, lambda: progress.pulse() or True)
                 
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                       universal_newlines=True, bufsize=1)
                 buf = text.get_buffer()
                 
-                GLib.idle_add(lambda: progress.set_text("Running command..."))
+                GLib.idle_add(lambda: progress.set_text("Running..."))
                 
                 for line in iter(proc.stdout.readline, ''):
-                    def add_line(l=line):
-                        buf.insert(buf.get_end_iter(), l)
-                        GLib.idle_add(auto_scroll)
-                        return False
-                    GLib.idle_add(add_line)
+                    GLib.idle_add(lambda l=line: buf.insert(buf.get_end_iter(), l))
                 
                 proc.wait()
                 GLib.source_remove(pulse_id)
                 
-                if proc.returncode == 0:
-                    result = "\n✓ Command completed successfully"
-                    GLib.idle_add(lambda: progress.set_fraction(1.0))
-                    GLib.idle_add(lambda: progress.set_text("Completed successfully"))
-                    GLib.idle_add(lambda: progress.add_css_class("success"))
-                    GLib.idle_add(self.load_packages)
-                else:
-                    result = f"\n✗ Command failed (exit code {proc.returncode})"
-                    GLib.idle_add(lambda: progress.set_fraction(1.0))
-                    GLib.idle_add(lambda: progress.set_text("Command failed"))
-                    GLib.idle_add(lambda: progress.add_css_class("error"))
+                success = proc.returncode == 0
+                result = "✓ Success" if success else f"✗ Failed ({proc.returncode})"
                 
-                GLib.idle_add(lambda: buf.insert(buf.get_end_iter(), result))
-                GLib.idle_add(auto_scroll)
+                GLib.idle_add(lambda: progress.set_fraction(1.0))
+                GLib.idle_add(lambda: progress.set_text(result))
+                GLib.idle_add(lambda: progress.add_css_class("success" if success else "error"))
+                GLib.idle_add(lambda: buf.insert(buf.get_end_iter(), f"\n{result}"))
+                
+                if success:
+                    GLib.idle_add(self.load_packages)
                     
             except Exception as e:
                 if 'pulse_id' in locals():
                     GLib.source_remove(pulse_id)
-                GLib.idle_add(lambda: progress.set_text("Error occurred"))
+                GLib.idle_add(lambda: progress.set_text("Error"))
                 GLib.idle_add(lambda: progress.add_css_class("error"))
-                GLib.idle_add(lambda: buf.insert(buf.get_end_iter(), f"\nError: {e}"))
-                GLib.idle_add(auto_scroll)
         
         threading.Thread(target=run, daemon=True).start()
 
@@ -348,13 +443,9 @@ class App(Adw.Application):
         super().__init__(application_id="org.suckless.pacman")
         
     def do_activate(self):
-        style_manager = Adw.StyleManager.get_default()
-        style_manager.set_color_scheme(Adw.ColorScheme.PREFER_DARK)
-        
-        win = PackageManager(self)
-        win.present()
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
+        PackageManager(self).present()
 
 if __name__ == "__main__":
     Adw.init()
-    app = App()
-    app.run(sys.argv)
+    App().run(sys.argv)
