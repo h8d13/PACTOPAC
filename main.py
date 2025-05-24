@@ -494,15 +494,35 @@ class PkgMan(Adw.ApplicationWindow):
         def load_info():
             try:
                 if pkg_type == "flatpak":
-                    result = subprocess.run(['flatpak', 'info', self.selected[4]], capture_output=True, text=True, check=True)
+                    # For flatpak, we need the full application ID
+                    if len(self.selected) > 4:
+                        app_id = self.selected[4]  # Should be the full com.app.Name ID
+                        installed = self.selected[2]  # Whether it's installed
+                        
+                        if installed:
+                            # For installed apps, use 'flatpak info'
+                            result = subprocess.run(['flatpak', 'info', app_id], capture_output=True, text=True, check=True)
+                        else:
+                            # For uninstalled apps, use 'flatpak remote-info' with the remote name
+                            result = subprocess.run(['flatpak', 'remote-info', 'flathub', app_id], capture_output=True, text=True, check=True)
+                    else:
+                        print("Error - flatpak package missing app ID")
+                        GLib.idle_add(self.display_info, toolbar_view, f"Error: Flatpak package data incomplete")
+                        return
                 else:
                     result = subprocess.run(['pacman', '-Si', pkg_name], capture_output=True, text=True, check=True)
                     if not result.stdout.strip():
                         result = subprocess.run(['pacman', '-Qi', pkg_name], capture_output=True, text=True, check=True)
                 
                 GLib.idle_add(self.display_info, toolbar_view, result.stdout)
-            except subprocess.CalledProcessError:
-                GLib.idle_add(self.display_info, toolbar_view, f"No info available for {pkg_name}")
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Failed to get info for {pkg_name}"
+                if pkg_type == "flatpak":
+                    cmd_used = f"flatpak {'info' if self.selected[2] else 'remote-info flathub'} {app_id if 'app_id' in locals() else 'unknown'}"
+                    error_msg += f"\nCommand: {cmd_used}"
+                    error_msg += f"\nError: {e.stderr if e.stderr else 'Unknown error'}"
+                print(f"Debug - command failed: {error_msg}")
+                GLib.idle_add(self.display_info, toolbar_view, error_msg)
         
         threading.Thread(target=load_info, daemon=True).start()
     
@@ -515,20 +535,73 @@ class PkgMan(Adw.ApplicationWindow):
         
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         
-        for line in info_text.strip().split('\n'):
-            if ':' in line and not line.startswith(' '):
-                key, value = line.split(':', 1)
+        lines = info_text.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
                 
-                row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-                key_label = Gtk.Label(label=key.strip(), halign=Gtk.Align.START)
-                key_label.set_markup(f"<b>{key.strip()}</b>")
-                key_label.set_size_request(100, -1)
-                
-                value_label = Gtk.Label(label=value.strip(), halign=Gtk.Align.START, hexpand=True, wrap=True, selectable=True)
-                
-                row_box.append(key_label)
-                row_box.append(value_label)
-                content_box.append(row_box)
+            # Handle both pacman format (Key : Value) and flatpak format (Key: Value)
+            if ':' in line and not line.startswith(' ') and not line.startswith('\t'):
+                # Split only on the first colon to handle values that contain colons
+                parts = line.split(':', 1)
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    value = parts[1].strip()
+                    
+                    row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+                    
+                    key_label = Gtk.Label(label=key, halign=Gtk.Align.START, valign=Gtk.Align.START)
+                    key_label.set_markup(f"<b>{key}</b>")
+                    key_label.set_size_request(120, -1)
+                    key_label.set_xalign(0.0)  # Left align within allocated space
+                    
+                    value_label = Gtk.Label(
+                        label=value, 
+                        halign=Gtk.Align.START, 
+                        valign=Gtk.Align.START, 
+                        hexpand=True, 
+                        wrap=True, 
+                        selectable=True
+                    )
+                    value_label.set_xalign(0.0)  # Left align within allocated space
+                    
+                    row_box.append(key_label)
+                    row_box.append(value_label)
+                    content_box.append(row_box)
+            else:
+                # Handle continuation lines or lines without colons
+                if line.startswith(' ') or line.startswith('\t'):
+                    # This is likely a continuation of the previous field
+                    continue_label = Gtk.Label(
+                        label=line.strip(), 
+                        halign=Gtk.Align.START, 
+                        hexpand=True, 
+                        wrap=True, 
+                        selectable=True
+                    )
+                    continue_label.set_xalign(0.0)
+                    continue_label.set_margin_start(132)  # Indent to align with values
+                    content_box.append(continue_label)
+                else:
+                    # Lines without colons (like section headers)
+                    section_label = Gtk.Label(label=line, halign=Gtk.Align.START, wrap=True, selectable=True)
+                    section_label.set_markup(f"<b>{line}</b>")
+                    section_label.set_xalign(0.0)
+                    content_box.append(section_label)
+        
+        # If no structured content was found, show the raw text
+        if not content_box.get_first_child():
+            raw_label = Gtk.Label(
+                label=info_text, 
+                halign=Gtk.Align.START, 
+                valign=Gtk.Align.START,
+                wrap=True, 
+                selectable=True
+            )
+            raw_label.set_xalign(0.0)
+            content_box.append(raw_label)
         
         scroll.set_child(content_box)
         toolbar_view.set_content(scroll)
