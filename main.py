@@ -105,8 +105,11 @@ class PackageManager(Adw.ApplicationWindow):
             return False
     
     def show_settings(self, button):
-        dialog = Adw.PreferencesWindow(title="Settings", transient_for=self, modal=True)
-        dialog.set_default_size(500, 400)
+        dialog = Adw.PreferencesDialog()
+        dialog.set_title("Settings")
+        # Use content properties instead of set_default_size
+        dialog.set_content_width(500)
+        dialog.set_content_height(400)
         
         page = Adw.PreferencesPage(title="General", icon_name="preferences-system-symbolic")
         dialog.add(page)
@@ -143,7 +146,7 @@ class PackageManager(Adw.ApplicationWindow):
             )
             flatpak_group.add(info_row)
         
-        dialog.present()
+        dialog.present(self)
     
     def toggle_setting(self, enabled, enable_cmd, disable_cmd, reload=True):
         def run():
