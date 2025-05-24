@@ -641,8 +641,14 @@ class PkgMan(Adw.ApplicationWindow):
                 
                 GLib.idle_add(lambda: progress.set_text("Running..."))
                 
+                def insert_and_scroll(line):
+                    buf.insert(buf.get_end_iter(), line)
+                    # Auto-scroll to the end
+                    mark = buf.get_insert()
+                    text.scroll_mark_onscreen(mark)
+                
                 for line in iter(proc.stdout.readline, ''):
-                    GLib.idle_add(lambda l=line: buf.insert(buf.get_end_iter(), l))
+                    GLib.idle_add(lambda l=line: insert_and_scroll(l))
                 
                 proc.wait()
                 GLib.source_remove(pulse_id)
@@ -653,7 +659,7 @@ class PkgMan(Adw.ApplicationWindow):
                 GLib.idle_add(lambda: progress.set_fraction(1.0))
                 GLib.idle_add(lambda: progress.set_text(result))
                 GLib.idle_add(lambda: progress.add_css_class("success" if success else "error"))
-                GLib.idle_add(lambda: buf.insert(buf.get_end_iter(), f"\n{result}"))
+                GLib.idle_add(lambda: insert_and_scroll(f"\n{result}"))
                 
                 if success:
                     GLib.idle_add(self.load_packages)
