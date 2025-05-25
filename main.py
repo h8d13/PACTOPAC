@@ -111,14 +111,16 @@ class PkgMan(Adw.ApplicationWindow):
         except:
             return False
             
-    def install_fp_and_refresh(self):
+    def install_fp_and_refresh(self, dialog):
         """Install flatpak and refresh the package list afterwards"""
         def install_and_refresh():
             try:
                 # Install flatpak
                 subprocess.run(['pacman', '-S', '--noconfirm', 'flatpak'], check=True)
-                # Refresh the package list on the main thread
+                # Refresh the package list and close/reopen settings dialog on the main thread
                 GLib.idle_add(self.load_packages)
+                GLib.idle_add(dialog.close)
+                GLib.idle_add(lambda: self.show_settings(None))
             except subprocess.CalledProcessError as e:
                 print(f"Failed to install flatpak: {e}")
         
