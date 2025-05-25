@@ -110,7 +110,21 @@ class PkgMan(Adw.ApplicationWindow):
                 return bool(re.search(r'^\[multilib\]', f.read(), re.MULTILINE))
         except:
             return False
+            
+    def install_fp_and_resfresh(self):
+    """Install flatpak and refresh the package list afterwards"""
+        def install_and_refresh():
+            try:
+                # Install flatpak
+                subprocess.run(['pacman', '-S', '--noconfirm', 'flatpak'], check=True)
+                # Refresh the package list on the main thread
+                GLib.idle_add(self.load_packages)
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to install flatpak: {e}")
     
+    # Run in a separate thread to avoid blocking the UI
+    threading.Thread(target=install_and_refresh, daemon=True).start()
+
     def get_current_mirror_country(self, countries):
         """Parse /etc/pacman.d/mirrorlist and match against countries list"""
         try:
@@ -167,36 +181,97 @@ class PkgMan(Adw.ApplicationWindow):
             subtitle="Select your country or region for faster downloads"
         )
         country_model = Gtk.StringList()
-
-        # Load countries from JSON
-        import json
-        try:
-            with open("countries.json", "r") as f:
-                countries_data = json.load(f)
-                countries = [(country["name"], country["code"]) for country in countries_data["countries"]]
-        except FileNotFoundError:
-            print("Missing json file")
-            countries = [("All Countries", "all")]
-
+    
+        # Embedded countries data
+        countries = [
+            ("All Countries", "all"),
+            ("Australia", "AU"),
+            ("Austria", "AT"),
+            ("Bangladesh", "BD"),
+            ("Belarus", "BY"),
+            ("Belgium", "BE"),
+            ("Bosnia and Herzegovina", "BA"),
+            ("Brazil", "BR"),
+            ("Bulgaria", "BG"),
+            ("Canada", "CA"),
+            ("Chile", "CL"),
+            ("China", "CN"),
+            ("Colombia", "CO"),
+            ("Croatia", "HR"),
+            ("Czech Republic", "CZ"),
+            ("Denmark", "DK"),
+            ("Ecuador", "EC"),
+            ("Estonia", "EE"),
+            ("Finland", "FI"),
+            ("France", "FR"),
+            ("Georgia", "GE"),
+            ("Germany", "DE"),
+            ("Greece", "GR"),
+            ("Hong Kong", "HK"),
+            ("Hungary", "HU"),
+            ("Iceland", "IS"),
+            ("India", "IN"),
+            ("Indonesia", "ID"),
+            ("Iran", "IR"),
+            ("Ireland", "IE"),
+            ("Israel", "IL"),
+            ("Italy", "IT"),
+            ("Japan", "JP"),
+            ("Kazakhstan", "KZ"),
+            ("Kenya", "KE"),
+            ("Latvia", "LV"),
+            ("Lithuania", "LT"),
+            ("Luxembourg", "LU"),
+            ("Mexico", "MX"),
+            ("Moldova", "MD"),
+            ("Netherlands", "NL"),
+            ("New Caledonia", "NC"),
+            ("New Zealand", "NZ"),
+            ("North Macedonia", "MK"),
+            ("Norway", "NO"),
+            ("Pakistan", "PK"),
+            ("Paraguay", "PY"),
+            ("Poland", "PL"),
+            ("Portugal", "PT"),
+            ("Romania", "RO"),
+            ("Russia", "RU"),
+            ("Serbia", "RS"),
+            ("Singapore", "SG"),
+            ("Slovakia", "SK"),
+            ("Slovenia", "SI"),
+            ("South Africa", "ZA"),
+            ("South Korea", "KR"),
+            ("Spain", "ES"),
+            ("Sweden", "SE"),
+            ("Switzerland", "CH"),
+            ("Taiwan", "TW"),
+            ("Thailand", "TH"),
+            ("Turkey", "TR"),
+            ("Ukraine", "UA"),
+            ("United Kingdom", "GB"),
+            ("United States", "US"),
+            ("Vietnam", "VN")
+        ]
+    
         for name, code in countries:
             country_model.append(name)
         country_row.set_model(country_model)
-
+    
         # Set the current selection based on mirrorlist
         current_country = self.get_current_mirror_country(countries)
         for i, (name, code) in enumerate(countries):
             if name == current_country:
                 country_row.set_selected(i)
                 break
-
+    
         mirror_group.add(country_row)
-
+    
         # Generate button
         generate_row = Adw.ActionRow(
             title="Update Mirrorlist",
             subtitle="Generate and apply new mirrorlist for selected country"
         )
-
+    
         generate_btn = Gtk.Button(label="Generate")
         generate_btn.add_css_class("suggested-action")
         generate_btn.set_valign(Gtk.Align.CENTER)
@@ -228,7 +303,8 @@ class PkgMan(Adw.ApplicationWindow):
             install_btn = Gtk.Button(label="Install")
             install_btn.add_css_class("suggested-action") 
             install_btn.set_valign(Gtk.Align.CENTER)
-            install_btn.connect("clicked", lambda b: self.run_cmd(['pacman', '-S', '--noconfirm', 'flatpak']))
+            # Modified this line to include refresh after installation
+            install_btn.connect("clicked", lambda b: self.install_fp_and_resfresh())
             unavailable_row.add_suffix(install_btn)
             flatpak_group.add(unavailable_row)
         
