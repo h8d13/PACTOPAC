@@ -112,20 +112,16 @@ class PkgMan(Adw.ApplicationWindow):
             return False
             
     def install_fp_and_refresh(self, dialog):
-        """Install flatpak and refresh the package list afterwards"""
-        def install_and_refresh():
-            try:
-                # Install flatpak
-                subprocess.run(['pacman', '-S', '--noconfirm', 'flatpak'], check=True)
-                # Refresh the package list and close/reopen settings dialog on the main thread
-                GLib.idle_add(self.load_packages)
-                GLib.idle_add(dialog.close)
-                GLib.idle_add(lambda: self.show_settings(None))
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to install flatpak: {e}")
+        """Install flatpak and refresh the settings dialog afterwards"""
+        # Close the current settings dialog
+        dialog.close()
         
-        # Run in a separate thread to avoid blocking the UI
-        threading.Thread(target=install_and_refresh, daemon=True).start()
+        # Use the existing run_cmd method to install flatpak
+        self.run_cmd(['pacman', '-S', '--noconfirm', 'flatpak'])
+        
+        # Schedule opening a new settings dialog after a short delay
+        # This gives time for the installation to complete
+        GLib.timeout_add(1000, lambda: self.show_settings(None))
 
     def get_current_mirror_country(self, countries):
         """Parse /etc/pacman.d/mirrorlist and match against countries list"""
