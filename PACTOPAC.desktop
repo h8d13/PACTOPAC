@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=System;PackageManager;
+Comment=Suckless Arch Linux package manager
+Exec=sudo python3 $HOME/Scripts/Twopacs/main.py
+Icon=package-x-generic
+Name[en_US]=PAC2PAC
+Name=PAC2PAC
+StartupNotify=true
+Terminal=true
+Type=Application
