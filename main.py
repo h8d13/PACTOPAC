@@ -304,7 +304,7 @@ class PkgMan(Adw.ApplicationWindow):
             install_btn.add_css_class("suggested-action") 
             install_btn.set_valign(Gtk.Align.CENTER)
             # Modified this line to include refresh after installation
-            install_btn.connect("clicked", lambda b: self.install_fp_and_refresh())
+            install_btn.connect("clicked", lambda b: self.install_fp_and_refresh(dialog))
             unavailable_row.add_suffix(install_btn)
             flatpak_group.add(unavailable_row)
         
