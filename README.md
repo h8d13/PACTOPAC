@@ -10,6 +10,5 @@ Simple GUI for pacman using Subprocess.
 ### Get it running:
 
 `$ pacman -S python-gobject gtk4 libadwaita`
-> Should be installed by default on many distros.
 
 `$ sudo python3 main.py`
