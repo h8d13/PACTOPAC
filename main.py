@@ -160,17 +160,14 @@ class PkgMan(Adw.ApplicationWindow):
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
         else:
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)    
-
-
-    def check_cmd(self, cmd):
+    
+    def check_fp(self):
         try:
+            cmd = (['flatpak', '--version'])
             subprocess.run(cmd, capture_output=True, check=True)
             return True
         except:
             return False
-    
-    def check_fp(self):
-        return self.check_cmd(['flatpak', '--version'])
     
     def check_fh(self):
         try:
@@ -513,7 +510,7 @@ class PkgMan(Adw.ApplicationWindow):
         has_more = end_idx < total_filtered
         self.load_more_btn.set_sensitive(has_more)
         self.load_more_btn.set_label("More..." if has_more else "All packages loaded")
-        
+    
         total_showing = min((self.current_page + 1) * self.page_size, total_filtered)
         if search_text:
             self.status.set_text(f"Showing {total_showing} of {total_filtered} filtered packages")
@@ -521,11 +518,14 @@ class PkgMan(Adw.ApplicationWindow):
             total_installed = sum(1 for pkg in self.packages if pkg[2])
             flatpak_installed = sum(1 for pkg in self.packages if pkg[2] and len(pkg) > 3 and pkg[3] == "flatpak")
             
+            # Get total size
+            total_size = self.get_total_package_sizes()
+            
             if flatpak_installed > 0:
-                self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed ({flatpak_installed} flatpak)")
+                self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed ({flatpak_installed} flatpak) • {total_size}")
             else:
-                self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed")
-    
+                self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed • {total_size}")
+
     def load_more_packages(self, button):
         self.current_page += 1
         self.refresh_list()
@@ -567,6 +567,38 @@ class PkgMan(Adw.ApplicationWindow):
     def handle_update(self, button):
         self.run_cmd(['pacman', '-Syuu', '--noconfirm'])
     
+    def get_total_package_sizes(self):
+        """Get total size of installed packages"""
+        try:
+            # Get pacman package sizes
+            result = subprocess.run(['pacman', '-Qi'], capture_output=True, text=True, check=True)
+            total_size = 0
+            
+            for line in result.stdout.split('\n'):
+                if line.startswith('Installed Size'):
+                    size_str = line.split(':', 1)[1].strip()
+                    # Parse size (handles KiB, MiB, GiB)
+                    if 'KiB' in size_str:
+                        size = float(size_str.replace('KiB', '').strip()) * 1024
+                    elif 'MiB' in size_str:
+                        size = float(size_str.replace('MiB', '').strip()) * 1024 * 1024
+                    elif 'GiB' in size_str:
+                        size = float(size_str.replace('GiB', '').strip()) * 1024 * 1024 * 1024
+                    else:
+                        continue
+                    total_size += size
+            
+            # Format the total size nicely
+            if total_size > 1024**3:
+                return f"{total_size / (1024**3):.1f} GiB"
+            elif total_size > 1024**2:
+                return f"{total_size / (1024**2):.1f} MiB"
+            else:
+                return f"{total_size / 1024:.1f} KiB"
+                
+        except:
+            return "Unknown"
+
     def show_package_info(self, button):
         if not self.selected:
             return
@@ -574,7 +606,7 @@ class PkgMan(Adw.ApplicationWindow):
         pkg_name, pkg_type = self.selected[0], self.selected[3]
         
         dialog = Adw.Window(title=f"Info: {pkg_name}", transient_for=self, modal=True)
-        dialog.set_default_size(800, 600)
+        dialog.set_default_size(600, 400)
         
         toolbar_view = Adw.ToolbarView()
         toolbar_view.add_top_bar(Adw.HeaderBar())
