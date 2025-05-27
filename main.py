@@ -336,7 +336,7 @@ class PkgMan(Adw.ApplicationWindow):
         app_row = Adw.ActionRow(title="PacToPac", subtitle="Suckless Arch Linux package manager")
         about_group.add(app_row)
         
-        version_row = Adw.ActionRow(title="Version", subtitle="1.0.1")
+        version_row = Adw.ActionRow(title="Version", subtitle="1.0.3")
         about_group.add(version_row)
         
         # Appearance group with theme toggle
@@ -389,6 +389,7 @@ class PkgMan(Adw.ApplicationWindow):
         dialog.present(self)
     
     def run_toggle(self, enabled, enable_cmd, disable_cmd):
+        # threaded utilities to not block UI
         def run():
             try:
                 subprocess.run(enable_cmd if enabled else disable_cmd, check=True)
@@ -736,7 +737,7 @@ class PkgMan(Adw.ApplicationWindow):
     
     def run_cmd(self, cmd):
         dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
-        dialog.set_default_size(800, 600)
+        dialog.set_default_size(800, 400)
         
         toolbar_view = Adw.ToolbarView()
         toolbar_view.add_top_bar(Adw.HeaderBar())
