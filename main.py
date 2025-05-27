@@ -735,7 +735,7 @@ class PkgMan(Adw.ApplicationWindow):
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1)
                 buf = text.get_buffer()
                 
-                GLib.idle_add(lambda: progress.set_text("Running..."))
+                GLib.idle_add(lambda: progress.set_text("Running, please wait..."))
                 
                 def insert_and_scroll(line):
                     buf.insert(buf.get_end_iter(), line)
