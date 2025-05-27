@@ -10,6 +10,76 @@ import sys
 import re
 import urllib.request
 
+countries = [
+    ("All Countries", "all"),
+    ("Australia", "AU"),
+    ("Austria", "AT"),
+    ("Bangladesh", "BD"),
+    ("Belarus", "BY"),
+    ("Belgium", "BE"),
+    ("Bosnia and Herzegovina", "BA"),
+    ("Brazil", "BR"),
+    ("Bulgaria", "BG"),
+    ("Canada", "CA"),
+    ("Chile", "CL"),
+    ("China", "CN"),
+    ("Colombia", "CO"),
+    ("Croatia", "HR"),
+    ("Czech Republic", "CZ"),
+    ("Denmark", "DK"),
+    ("Ecuador", "EC"),
+    ("Estonia", "EE"),
+    ("Finland", "FI"),
+    ("France", "FR"),
+    ("Georgia", "GE"),
+    ("Germany", "DE"),
+    ("Greece", "GR"),
+    ("Hong Kong", "HK"),
+    ("Hungary", "HU"),
+    ("Iceland", "IS"),
+    ("India", "IN"),
+    ("Indonesia", "ID"),
+    ("Iran", "IR"),
+    ("Ireland", "IE"),
+    ("Israel", "IL"),
+    ("Italy", "IT"),
+    ("Japan", "JP"),
+    ("Kazakhstan", "KZ"),
+    ("Kenya", "KE"),
+    ("Latvia", "LV"),
+    ("Lithuania", "LT"),
+    ("Luxembourg", "LU"),
+    ("Mexico", "MX"),
+    ("Moldova", "MD"),
+    ("Netherlands", "NL"),
+    ("New Caledonia", "NC"),
+    ("New Zealand", "NZ"),
+    ("North Macedonia", "MK"),
+    ("Norway", "NO"),
+    ("Pakistan", "PK"),
+    ("Paraguay", "PY"),
+    ("Poland", "PL"),
+    ("Portugal", "PT"),
+    ("Romania", "RO"),
+    ("Russia", "RU"),
+    ("Serbia", "RS"),
+    ("Singapore", "SG"),
+    ("Slovakia", "SK"),
+    ("Slovenia", "SI"),
+    ("South Africa", "ZA"),
+    ("South Korea", "KR"),
+    ("Spain", "ES"),
+    ("Sweden", "SE"),
+    ("Switzerland", "CH"),
+    ("Taiwan", "TW"),
+    ("Thailand", "TH"),
+    ("Turkey", "TR"),
+    ("Ukraine", "UA"),
+    ("United Kingdom", "GB"),
+    ("United States", "US"),
+    ("Vietnam", "VN")
+]
+
 class PkgMan(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app)
@@ -82,7 +152,16 @@ class PkgMan(Adw.ApplicationWindow):
         self.status = Gtk.Label(label="Loading packages...")
         self.status.add_css_class("dim-label")
         box.append(self.status)
-    
+
+        # Load and apply saved theme preference
+        saved_is_light = self.load_theme_preference()
+        style_manager = Adw.StyleManager.get_default()
+        if saved_is_light:
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+        else:
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)    
+
+
     def check_cmd(self, cmd):
         try:
             subprocess.run(cmd, capture_output=True, check=True)
@@ -112,7 +191,6 @@ class PkgMan(Adw.ApplicationWindow):
             return False
             
     def install_fp_and_refresh(self, dialog):
-        """Install flatpak and refresh the settings dialog afterwards"""
         # Close the current settings dialog
         dialog.close()
         
@@ -124,12 +202,10 @@ class PkgMan(Adw.ApplicationWindow):
         GLib.timeout_add(1000, lambda: self.show_settings(None))
 
     def get_current_mirror_country(self, countries):
-        """Parse /etc/pacman.d/mirrorlist and match against countries list"""
         try:
             with open('/etc/pacman.d/mirrorlist', 'r') as f:
                 content = f.read().lower()
             
-            # Check each country name from the JSON list
             for name, code in countries:
                 if name.lower() in content:
                     return name
@@ -139,19 +215,36 @@ class PkgMan(Adw.ApplicationWindow):
         except (FileNotFoundError, IOError):
             return 'All Countries'
     
+    def save_theme_preference(self, is_light_theme):
+        config_dir = os.path.expanduser("~/.config/pactopac")
+        os.makedirs(config_dir, exist_ok=True)
+        
+        config_file = os.path.join(config_dir, "theme")
+        with open(config_file, 'w') as f:
+            f.write("1" if is_light_theme else "0")
+
+    def load_theme_preference(self):
+        try:
+            config_file = os.path.expanduser("~/.config/pactopac/theme")
+            with open(config_file, 'r') as f:
+                return f.read().strip() == "1"
+        except:
+            return False  # Default to dark theme
+
     def on_theme_toggle(self, switch_row, param):
-        """Handle theme toggle switch"""
         style_manager = Adw.StyleManager.get_default()
-        if switch_row.get_active():
+        is_light = switch_row.get_active()
+        
+        if is_light:
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
         else:
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        
+        self.save_theme_preference(is_light)
     
     def show_settings(self, button):
         dialog = Adw.PreferencesDialog()
         dialog.set_title("Settings")
-        dialog.set_content_width(600)
-        dialog.set_content_height(700)
         
         # Repository Settings Page
         repo_page = Adw.PreferencesPage(title="Repositories", icon_name="folder-symbolic")
@@ -179,77 +272,6 @@ class PkgMan(Adw.ApplicationWindow):
             subtitle="Select your country or region for faster downloads"
         )
         country_model = Gtk.StringList()
-    
-        # Embedded countries data
-        countries = [
-            ("All Countries", "all"),
-            ("Australia", "AU"),
-            ("Austria", "AT"),
-            ("Bangladesh", "BD"),
-            ("Belarus", "BY"),
-            ("Belgium", "BE"),
-            ("Bosnia and Herzegovina", "BA"),
-            ("Brazil", "BR"),
-            ("Bulgaria", "BG"),
-            ("Canada", "CA"),
-            ("Chile", "CL"),
-            ("China", "CN"),
-            ("Colombia", "CO"),
-            ("Croatia", "HR"),
-            ("Czech Republic", "CZ"),
-            ("Denmark", "DK"),
-            ("Ecuador", "EC"),
-            ("Estonia", "EE"),
-            ("Finland", "FI"),
-            ("France", "FR"),
-            ("Georgia", "GE"),
-            ("Germany", "DE"),
-            ("Greece", "GR"),
-            ("Hong Kong", "HK"),
-            ("Hungary", "HU"),
-            ("Iceland", "IS"),
-            ("India", "IN"),
-            ("Indonesia", "ID"),
-            ("Iran", "IR"),
-            ("Ireland", "IE"),
-            ("Israel", "IL"),
-            ("Italy", "IT"),
-            ("Japan", "JP"),
-            ("Kazakhstan", "KZ"),
-            ("Kenya", "KE"),
-            ("Latvia", "LV"),
-            ("Lithuania", "LT"),
-            ("Luxembourg", "LU"),
-            ("Mexico", "MX"),
-            ("Moldova", "MD"),
-            ("Netherlands", "NL"),
-            ("New Caledonia", "NC"),
-            ("New Zealand", "NZ"),
-            ("North Macedonia", "MK"),
-            ("Norway", "NO"),
-            ("Pakistan", "PK"),
-            ("Paraguay", "PY"),
-            ("Poland", "PL"),
-            ("Portugal", "PT"),
-            ("Romania", "RO"),
-            ("Russia", "RU"),
-            ("Serbia", "RS"),
-            ("Singapore", "SG"),
-            ("Slovakia", "SK"),
-            ("Slovenia", "SI"),
-            ("South Africa", "ZA"),
-            ("South Korea", "KR"),
-            ("Spain", "ES"),
-            ("Sweden", "SE"),
-            ("Switzerland", "CH"),
-            ("Taiwan", "TW"),
-            ("Thailand", "TH"),
-            ("Turkey", "TR"),
-            ("Ukraine", "UA"),
-            ("United Kingdom", "GB"),
-            ("United States", "US"),
-            ("Vietnam", "VN")
-        ]
     
         for name, code in countries:
             country_model.append(name)
@@ -552,7 +574,7 @@ class PkgMan(Adw.ApplicationWindow):
         pkg_name, pkg_type = self.selected[0], self.selected[3]
         
         dialog = Adw.Window(title=f"Info: {pkg_name}", transient_for=self, modal=True)
-        dialog.set_default_size(600, 500)
+        dialog.set_default_size(800, 600)
         
         toolbar_view = Adw.ToolbarView()
         toolbar_view.add_top_bar(Adw.HeaderBar())
@@ -683,7 +705,7 @@ class PkgMan(Adw.ApplicationWindow):
     
     def run_cmd(self, cmd):
         dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
-        dialog.set_default_size(600, 500)
+        dialog.set_default_size(800, 600)
         
         toolbar_view = Adw.ToolbarView()
         toolbar_view.add_top_bar(Adw.HeaderBar())
