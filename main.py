@@ -154,7 +154,7 @@ class PkgMan(Adw.ApplicationWindow):
         box.append(self.status)
 
         # Load and apply saved theme preference
-        saved_is_light = self.load_theme_preference()
+        saved_is_light = self.load_theme_pref()
         style_manager = Adw.StyleManager.get_default()
         if saved_is_light:
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
@@ -198,7 +198,7 @@ class PkgMan(Adw.ApplicationWindow):
         # This gives time for the installation to complete
         GLib.timeout_add(1000, lambda: self.show_settings(None))
 
-    def get_current_mirror_country(self, countries):
+    def get_current_mirror(self, countries):
         try:
             with open('/etc/pacman.d/mirrorlist', 'r') as f:
                 content = f.read().lower()
@@ -212,7 +212,7 @@ class PkgMan(Adw.ApplicationWindow):
         except (FileNotFoundError, IOError):
             return 'All Countries'
     
-    def save_theme_preference(self, is_light_theme):
+    def save_theme_pref(self, is_light_theme):
         config_dir = os.path.expanduser("~/.config/pactopac")
         os.makedirs(config_dir, exist_ok=True)
         
@@ -220,7 +220,7 @@ class PkgMan(Adw.ApplicationWindow):
         with open(config_file, 'w') as f:
             f.write("1" if is_light_theme else "0")
 
-    def load_theme_preference(self):
+    def load_theme_pref(self):
         try:
             config_file = os.path.expanduser("~/.config/pactopac/theme")
             with open(config_file, 'r') as f:
@@ -237,7 +237,7 @@ class PkgMan(Adw.ApplicationWindow):
         else:
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
         
-        self.save_theme_preference(is_light)
+        self.save_theme_pref(is_light)
     
     def show_settings(self, button):
         dialog = Adw.PreferencesDialog()
@@ -266,7 +266,7 @@ class PkgMan(Adw.ApplicationWindow):
         # Country selection
         country_row = Adw.ComboRow(
             title="Mirror Country",
-            subtitle="Select your country or region for faster downloads"
+            subtitle="Select your country or region, HTTPS/IPv4 default"
         )
         country_model = Gtk.StringList()
     
@@ -275,7 +275,7 @@ class PkgMan(Adw.ApplicationWindow):
         country_row.set_model(country_model)
     
         # Set the current selection based on mirrorlist
-        current_country = self.get_current_mirror_country(countries)
+        current_country = self.get_current_mirror(countries)
         for i, (name, code) in enumerate(countries):
             if name == current_country:
                 country_row.set_selected(i)
@@ -354,7 +354,7 @@ class PkgMan(Adw.ApplicationWindow):
         theme_row.set_active(is_light)
         theme_row.connect("notify::active", self.on_theme_toggle)
         appearance_group.add(theme_row)
-        
+
         dialog.present(self)
     
     def generate_mirrorlist(self, country_code):
@@ -568,7 +568,6 @@ class PkgMan(Adw.ApplicationWindow):
         self.run_cmd(['pacman', '-Syuu', '--noconfirm'])
     
     def get_total_package_sizes(self):
-        """Get total size of installed packages"""
         try:
             # Get pacman package sizes
             result = subprocess.run(['pacman', '-Qi'], capture_output=True, text=True, check=True)
