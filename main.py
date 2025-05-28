@@ -737,7 +737,7 @@ class PkgMan(Adw.ApplicationWindow):
     
     def run_cmd(self, cmd):
         dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
-        dialog.set_default_size(800, 400)
+        dialog.set_default_size(800, 600)
         
         toolbar_view = Adw.ToolbarView()
         toolbar_view.add_top_bar(Adw.HeaderBar())
