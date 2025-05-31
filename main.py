@@ -753,7 +753,9 @@ class PkgMan(Adw.ApplicationWindow):
         content_box.append(progress)
         
         scroll = Gtk.ScrolledWindow(vexpand=True)
-        text = Gtk.TextView(editable=False, monospace=True)
+        text = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        text.set_left_margin(6)
+        text.set_right_margin(6)
         scroll.set_child(text)
         content_box.append(scroll)
         
