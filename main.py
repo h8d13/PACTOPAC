@@ -167,31 +167,49 @@ class PkgMan(Adw.ApplicationWindow):
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)    
 
     def handle_clean_orphans(self, button):
-        """Handle cleaning orphaned packages"""
-        def check_and_remove():
+        """Handle cleaning orphaned packages, then cache if no orphans"""
+        def check_and_clean():
             try:
                 # Check if there are orphaned packages
                 result = subprocess.run(['pacman', '-Qtdq'], capture_output=True, text=True)
                 orphaned_packages = result.stdout.strip()
                 
-                if not orphaned_packages:
-                    GLib.idle_add(lambda: self.show_info_dialog("No Orphaned Packages", "No orphaned packages found on your system."))
-                    return
-                
-                # Remove orphaned packages
-                cmd = ['pacman', '-Rns'] + ['--noconfirm'] + orphaned_packages.split('\n')
-                GLib.idle_add(lambda: self.run_cmd(cmd))
+                if orphaned_packages:
+                    # Remove orphaned packages
+                    cmd = ['pacman', '-Rns'] + ['--noconfirm'] + orphaned_packages.split('\n')
+                    GLib.idle_add(lambda: self.run_cmd(cmd))
+                else:
+                    # No orphans found, clean cache instead
+                    GLib.idle_add(lambda: self.show_cache_clean_dialog())
                 
             except subprocess.CalledProcessError:
-                GLib.idle_add(lambda: self.show_info_dialog("No Orphaned Packages", "No orphaned packages found on your system."))
+                # No orphans found, clean cache instead
+                GLib.idle_add(lambda: self.show_cache_clean_dialog())
         
-        threading.Thread(target=check_and_remove, daemon=True).start()
+        threading.Thread(target=check_and_clean, daemon=True).start()
 
-    def show_info_dialog(self, title, message):
-        """Show an info dialog"""
-        dialog = Adw.AlertDialog(heading=title, body=message)
-        dialog.add_response("ok", "OK")
+    def show_cache_clean_dialog(self):
+        """Show dialog to choose cache cleaning option"""
+        dialog = Adw.AlertDialog(
+            heading="No Orphaned Packages",
+            body="No orphaned packages found. Would you like to clean the package cache instead?"
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("partial", "Clean Old Versions")
+        dialog.add_response("full", "Clean All Cache")
+        dialog.set_response_appearance("full", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_response_appearance("partial", Adw.ResponseAppearance.SUGGESTED)
+        dialog.connect("response", self.on_cache_clean_response)
         dialog.present(self)
+
+    def on_cache_clean_response(self, dialog, response):
+        """Handle cache cleaning dialog response"""
+        if response == "partial":
+            # pacman -Sc: removes old versions, keeps current
+            self.run_cmd(['pacman', '-Sc', '--noconfirm'])
+        elif response == "full":
+            # pacman -Scc: removes all cached packages
+            self.run_cmd(['pacman', '-Scc', '--noconfirm'])
 
     def check_fp(self):
         try:
