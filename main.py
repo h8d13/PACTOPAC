@@ -167,7 +167,6 @@ class PkgMan(Adw.ApplicationWindow):
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)    
 
     def handle_clean_orphans(self, button):
-        """Handle cleaning orphaned packages, then cache if no orphans"""
         def check_and_clean():
             try:
                 # Check if there are orphaned packages
@@ -189,7 +188,6 @@ class PkgMan(Adw.ApplicationWindow):
         threading.Thread(target=check_and_clean, daemon=True).start()
 
     def show_cache_clean_dialog(self):
-        """Show dialog to choose cache cleaning option"""
         dialog = Adw.AlertDialog(
             heading="No Orphaned Packages",
             body="No orphaned packages found. Would you like to clean the package cache instead?"
@@ -203,7 +201,6 @@ class PkgMan(Adw.ApplicationWindow):
         dialog.present(self)
 
     def on_cache_clean_response(self, dialog, response):
-        """Handle cache cleaning dialog response"""
         if response == "partial":
             # pacman -Sc: removes old versions, keeps current
             self.run_cmd(['pacman', '-Sc', '--noconfirm'])
