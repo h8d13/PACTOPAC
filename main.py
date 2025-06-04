@@ -132,7 +132,12 @@ class PkgMan(Adw.ApplicationWindow):
         update_btn = Gtk.Button(label="Update", sensitive=True)
         update_btn.connect("clicked", self.handle_update)
         
-        for btn in [update_btn, self.info_btn, self.action_btn]:
+
+        clean_orphans_btn = Gtk.Button(label="Clean", sensitive=True)
+        clean_orphans_btn.connect("clicked", self.handle_clean_orphans)
+        clean_orphans_btn.add_css_class("destructive-action")
+
+        for btn in [update_btn, self.info_btn, self.action_btn, clean_orphans_btn]:
             btn_box.append(btn)
         box.append(btn_box)
         
@@ -160,7 +165,34 @@ class PkgMan(Adw.ApplicationWindow):
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
         else:
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)    
-    
+
+    def handle_clean_orphans(self, button):
+        """Handle cleaning orphaned packages"""
+        def check_and_remove():
+            try:
+                # Check if there are orphaned packages
+                result = subprocess.run(['pacman', '-Qtdq'], capture_output=True, text=True)
+                orphaned_packages = result.stdout.strip()
+                
+                if not orphaned_packages:
+                    GLib.idle_add(lambda: self.show_info_dialog("No Orphaned Packages", "No orphaned packages found on your system."))
+                    return
+                
+                # Remove orphaned packages
+                cmd = ['pacman', '-Rns'] + ['--noconfirm'] + orphaned_packages.split('\n')
+                GLib.idle_add(lambda: self.run_cmd(cmd))
+                
+            except subprocess.CalledProcessError:
+                GLib.idle_add(lambda: self.show_info_dialog("No Orphaned Packages", "No orphaned packages found on your system."))
+        
+        threading.Thread(target=check_and_remove, daemon=True).start()
+
+    def show_info_dialog(self, title, message):
+        """Show an info dialog"""
+        dialog = Adw.AlertDialog(heading=title, body=message)
+        dialog.add_response("ok", "OK")
+        dialog.present(self)
+
     def check_fp(self):
         try:
             cmd = (['flatpak', '--version'])
