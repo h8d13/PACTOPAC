@@ -165,6 +165,145 @@ class PkgMan(Adw.ApplicationWindow):
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
         else:
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)    
+    
+    def show_settings(self, button):
+        dialog = Adw.PreferencesDialog()
+        dialog.set_title("Settings")
+        
+        # Repository Settings Page
+        repo_page = Adw.PreferencesPage(title="Repositories", icon_name="folder-symbolic")
+        dialog.add(repo_page)
+        
+        # Pacman repositories
+        pacman_group = Adw.PreferencesGroup(title="Pacman Repositories", description="Configure official Arch Linux repositories")
+        repo_page.add(pacman_group)
+        
+        multilib_row = Adw.SwitchRow(
+            title="Multilib Repository", 
+            subtitle="Enable 32-bit package support for games and legacy software"
+        )
+        multilib_row.set_active(self.check_multilib_enabled())
+        multilib_row.connect("notify::active", self.on_multilib_toggle)
+        pacman_group.add(multilib_row)
+        
+        # Mirror settings
+        mirror_group = Adw.PreferencesGroup(title="Mirror Configuration", description="Optimize package download speeds by location")
+        repo_page.add(mirror_group)
+        
+        # Country selection
+        country_row = Adw.ComboRow(
+            title="Mirror Country",
+            subtitle="Select your country or region, HTTPS/IPv4 default"
+        )
+        country_model = Gtk.StringList()
+    
+        for name, code in countries:
+            country_model.append(name)
+        country_row.set_model(country_model)
+    
+        # Set the current selection based on mirrorlist
+        current_country = self.get_current_mirror(countries)
+        for i, (name, code) in enumerate(countries):
+            if name == current_country:
+                country_row.set_selected(i)
+                break
+    
+        mirror_group.add(country_row)
+    
+        # Generate button
+        generate_row = Adw.ActionRow(
+            title="Update Mirrorlist",
+            subtitle="Generate and apply new mirrorlist for selected country"
+        )
+    
+        generate_btn = Gtk.Button(label="Generate")
+        generate_btn.add_css_class("suggested-action")
+        generate_btn.set_valign(Gtk.Align.CENTER)
+        generate_btn.connect("clicked", lambda b: self.generate_mirrorlist(countries[country_row.get_selected()][1]))
+        generate_row.add_suffix(generate_btn)
+        
+        mirror_group.add(generate_row)
+
+        # Hardware Detection Group
+        hardware_group = Adw.PreferencesGroup(
+            title="Hardware Detection", 
+            description="Analyze system hardware and check driver installation"
+        )
+        repo_page.add(hardware_group)
+
+        # Hardware detection row
+        hw_detect_row = Adw.ActionRow(
+            title="Detect Hardware",
+            subtitle="Scan CPU, GPU, and form factor; check microcode and driver status"
+        )
+
+        hw_detect_btn = Gtk.Button(label="Detect HW")
+        hw_detect_btn.add_css_class("suggested-action")
+        hw_detect_btn.set_valign(Gtk.Align.CENTER)
+        hw_detect_btn.connect("clicked", self.handle_hardware_detection)
+        hw_detect_row.add_suffix(hw_detect_btn)
+
+        hardware_group.add(hw_detect_row)
+        
+        # Flatpak Settings Page
+        flatpak_page = Adw.PreferencesPage(title="Flatpak", icon_name="application-x-addon-symbolic")
+        dialog.add(flatpak_page)
+        
+        flatpak_group = Adw.PreferencesGroup(title="Flatpak Configuration", description="Universal application packages")
+        flatpak_page.add(flatpak_group)
+        
+        if self.check_fp():
+            flathub_row = Adw.SwitchRow(
+                title="Flathub Repository", 
+                subtitle="Enable access to thousands of applications via Flatpak"
+            )
+            flathub_row.set_active(self.check_fh())
+            flathub_row.connect("notify::active", self.on_fh_toggle)
+            flatpak_group.add(flathub_row)
+        else:
+            unavailable_row = Adw.ActionRow(
+                title="Flatpak Not Available",
+                subtitle="Install flatpak package to enable universal app support"
+            )
+            install_btn = Gtk.Button(label="Install")
+            install_btn.add_css_class("suggested-action") 
+            install_btn.set_valign(Gtk.Align.CENTER)
+            # Modified this line to include refresh after installation
+            install_btn.connect("clicked", lambda b: self.install_fp_and_refresh(dialog))
+            unavailable_row.add_suffix(install_btn)
+            flatpak_group.add(unavailable_row)
+        
+        # About Page
+        about_page = Adw.PreferencesPage(title="About", icon_name="help-about-symbolic")
+        dialog.add(about_page)
+        
+        # App info group
+        about_group = Adw.PreferencesGroup()
+        about_page.add(about_group)
+        
+        app_row = Adw.ActionRow(title="PacToPac", subtitle="Suckless Arch Linux package manager")
+        about_group.add(app_row)
+        
+        version_row = Adw.ActionRow(title="Version", subtitle="1.0.4")
+        about_group.add(version_row)
+        
+        # Appearance group with theme toggle
+        appearance_group = Adw.PreferencesGroup(title="Appearance", description="Customize the look and feel")
+        about_page.add(appearance_group)
+        
+        # Get current theme state
+        style_manager = Adw.StyleManager.get_default()
+        is_light = style_manager.get_color_scheme() == Adw.ColorScheme.FORCE_LIGHT
+        
+        theme_row = Adw.SwitchRow(
+            title="Light Theme",
+            subtitle="Switch between light and dark appearance"
+        )
+        theme_row.set_active(is_light)
+        theme_row.connect("notify::active", self.on_theme_toggle)
+        appearance_group.add(theme_row)
+
+        dialog.present(self)
 
     def handle_clean_orphans(self, button):
         def check_and_clean():
@@ -285,146 +424,7 @@ class PkgMan(Adw.ApplicationWindow):
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
         
         self.save_theme_pref(is_light)
-    
-    def show_settings(self, button):
-        dialog = Adw.PreferencesDialog()
-        dialog.set_title("Settings")
-        
-        # Repository Settings Page
-        repo_page = Adw.PreferencesPage(title="Repositories", icon_name="folder-symbolic")
-        dialog.add(repo_page)
-        
-        # Pacman repositories
-        pacman_group = Adw.PreferencesGroup(title="Pacman Repositories", description="Configure official Arch Linux repositories")
-        repo_page.add(pacman_group)
-        
-        multilib_row = Adw.SwitchRow(
-            title="Multilib Repository", 
-            subtitle="Enable 32-bit package support for games and legacy software"
-        )
-        multilib_row.set_active(self.check_multilib_enabled())
-        multilib_row.connect("notify::active", self.on_multilib_toggle)
-        pacman_group.add(multilib_row)
-        
-        # Mirror settings
-        mirror_group = Adw.PreferencesGroup(title="Mirror Configuration", description="Optimize package download speeds by location")
-        repo_page.add(mirror_group)
-        
-        # Country selection
-        country_row = Adw.ComboRow(
-            title="Mirror Country",
-            subtitle="Select your country or region, HTTPS/IPv4 default"
-        )
-        country_model = Gtk.StringList()
-    
-        for name, code in countries:
-            country_model.append(name)
-        country_row.set_model(country_model)
-    
-        # Set the current selection based on mirrorlist
-        current_country = self.get_current_mirror(countries)
-        for i, (name, code) in enumerate(countries):
-            if name == current_country:
-                country_row.set_selected(i)
-                break
-    
-        mirror_group.add(country_row)
-    
-        # Generate button
-        generate_row = Adw.ActionRow(
-            title="Update Mirrorlist",
-            subtitle="Generate and apply new mirrorlist for selected country"
-        )
-    
-        generate_btn = Gtk.Button(label="Generate")
-        generate_btn.add_css_class("suggested-action")
-        generate_btn.set_valign(Gtk.Align.CENTER)
-        generate_btn.connect("clicked", lambda b: self.generate_mirrorlist(countries[country_row.get_selected()][1]))
-        generate_row.add_suffix(generate_btn)
-        
-        mirror_group.add(generate_row)
 
-        # Hardware Detection Group
-        hardware_group = Adw.PreferencesGroup(
-            title="Hardware Detection", 
-            description="Analyze system hardware and check driver installation"
-        )
-        repo_page.add(hardware_group)
-
-        # Hardware detection row
-        hw_detect_row = Adw.ActionRow(
-            title="Detect Hardware",
-            subtitle="Scan CPU, GPU, and form factor; check microcode and driver status"
-        )
-
-        hw_detect_btn = Gtk.Button(label="Run Detection")
-        hw_detect_btn.add_css_class("suggested-action")
-        hw_detect_btn.set_valign(Gtk.Align.CENTER)
-        hw_detect_btn.connect("clicked", self.handle_hardware_detection)
-        hw_detect_row.add_suffix(hw_detect_btn)
-
-        hardware_group.add(hw_detect_row)
-        
-        # Flatpak Settings Page
-        flatpak_page = Adw.PreferencesPage(title="Flatpak", icon_name="application-x-addon-symbolic")
-        dialog.add(flatpak_page)
-        
-        flatpak_group = Adw.PreferencesGroup(title="Flatpak Configuration", description="Universal application packages")
-        flatpak_page.add(flatpak_group)
-        
-        if self.check_fp():
-            flathub_row = Adw.SwitchRow(
-                title="Flathub Repository", 
-                subtitle="Enable access to thousands of applications via Flatpak"
-            )
-            flathub_row.set_active(self.check_fh())
-            flathub_row.connect("notify::active", self.on_fh_toggle)
-            flatpak_group.add(flathub_row)
-        else:
-            unavailable_row = Adw.ActionRow(
-                title="Flatpak Not Available",
-                subtitle="Install flatpak package to enable universal app support"
-            )
-            install_btn = Gtk.Button(label="Install")
-            install_btn.add_css_class("suggested-action") 
-            install_btn.set_valign(Gtk.Align.CENTER)
-            # Modified this line to include refresh after installation
-            install_btn.connect("clicked", lambda b: self.install_fp_and_refresh(dialog))
-            unavailable_row.add_suffix(install_btn)
-            flatpak_group.add(unavailable_row)
-        
-        # About Page
-        about_page = Adw.PreferencesPage(title="About", icon_name="help-about-symbolic")
-        dialog.add(about_page)
-        
-        # App info group
-        about_group = Adw.PreferencesGroup()
-        about_page.add(about_group)
-        
-        app_row = Adw.ActionRow(title="PacToPac", subtitle="Suckless Arch Linux package manager")
-        about_group.add(app_row)
-        
-        version_row = Adw.ActionRow(title="Version", subtitle="1.0.3")
-        about_group.add(version_row)
-        
-        # Appearance group with theme toggle
-        appearance_group = Adw.PreferencesGroup(title="Appearance", description="Customize the look and feel")
-        about_page.add(appearance_group)
-        
-        # Get current theme state
-        style_manager = Adw.StyleManager.get_default()
-        is_light = style_manager.get_color_scheme() == Adw.ColorScheme.FORCE_LIGHT
-        
-        theme_row = Adw.SwitchRow(
-            title="Light Theme",
-            subtitle="Switch between light and dark appearance"
-        )
-        theme_row.set_active(is_light)
-        theme_row.connect("notify::active", self.on_theme_toggle)
-        appearance_group.add(theme_row)
-
-        dialog.present(self)
-    
     def generate_mirrorlist(self, country_code):
         def generate():
             try:
