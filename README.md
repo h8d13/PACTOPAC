@@ -4,7 +4,7 @@
 Simple GUI for pacman/flatpak using Subprocess.
 
 ![Screenshot_20250524_173817](https://github.com/user-attachments/assets/377cad96-f707-497a-9729-c949c9626663)
-![Screenshot_20250524_173736](https://github.com/user-attachments/assets/cc7f8380-d3e3-4b0a-bf26-38a0011f74f8)
+![image](https://github.com/user-attachments/assets/f9e196b8-49d4-452c-8479-205069277ae0)
 
 ---
 
