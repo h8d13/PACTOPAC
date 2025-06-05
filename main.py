@@ -240,7 +240,7 @@ class PkgMan(Adw.ApplicationWindow):
         hw_detect_btn = Gtk.Button(label="Detect HW")
         hw_detect_btn.add_css_class("suggested-action")
         hw_detect_btn.set_valign(Gtk.Align.CENTER)
-        hw_detect_btn.connect("clicked", self.handle_hardware_detection)
+        hw_detect_btn.connect("clicked", self.on_hardware_detection)
         hw_detect_row.add_suffix(hw_detect_btn)
 
         hardware_group.add(hw_detect_row)
@@ -526,6 +526,13 @@ class PkgMan(Adw.ApplicationWindow):
             self.run_toggle(False, None, ['flatpak', 'remote-modify', '--disable', 'flathub'])
         
         GLib.idle_add(self.load_packages)
+
+    def on_hardware_detection(self, button):
+        script_path = os.path.join(os.path.dirname(__file__), 'newhw.py')
+        if os.path.exists(script_path):
+            self.run_cmd(['python3', script_path])
+        else:
+            self.show_error("Hardware detection script (newhw.py) not found")
     
     def load_packages(self):
         def load():
@@ -843,13 +850,6 @@ class PkgMan(Adw.ApplicationWindow):
         scroll.set_child(content_box)
         toolbar_view.set_content(scroll)
         return False
-
-    def handle_hardware_detection(self, button):
-        script_path = os.path.join(os.path.dirname(__file__), 'newhw.py')
-        if os.path.exists(script_path):
-            self.run_cmd(['python3', script_path])
-        else:
-            self.show_error("Hardware detection script (newhw.py) not found")
 
     def run_cmd(self, cmd):
         dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
