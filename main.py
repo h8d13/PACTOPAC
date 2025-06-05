@@ -344,6 +344,27 @@ class PkgMan(Adw.ApplicationWindow):
         
         mirror_group.add(generate_row)
 
+        # Hardware Detection Group
+        hardware_group = Adw.PreferencesGroup(
+            title="Hardware Detection", 
+            description="Analyze system hardware and check driver installation"
+        )
+        repo_page.add(hardware_group)
+
+        # Hardware detection row
+        hw_detect_row = Adw.ActionRow(
+            title="Detect Hardware",
+            subtitle="Scan CPU, GPU, and form factor; check microcode and driver status"
+        )
+
+        hw_detect_btn = Gtk.Button(label="Run Detection")
+        hw_detect_btn.add_css_class("suggested-action")
+        hw_detect_btn.set_valign(Gtk.Align.CENTER)
+        hw_detect_btn.connect("clicked", self.handle_hardware_detection)
+        hw_detect_row.add_suffix(hw_detect_btn)
+
+        hardware_group.add(hw_detect_row)
+        
         # Flatpak Settings Page
         flatpak_page = Adw.PreferencesPage(title="Flatpak", icon_name="application-x-addon-symbolic")
         dialog.add(flatpak_page)
@@ -781,7 +802,14 @@ class PkgMan(Adw.ApplicationWindow):
         scroll.set_child(content_box)
         toolbar_view.set_content(scroll)
         return False
-    
+
+    def handle_hardware_detection(self, button):
+        script_path = os.path.join(os.path.dirname(__file__), 'newhw.py')
+        if os.path.exists(script_path):
+            self.run_cmd(['python3', script_path])
+        else:
+            self.show_error("Hardware detection script (newhw.py) not found")
+
     def run_cmd(self, cmd):
         dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
         dialog.set_default_size(800, 600)
