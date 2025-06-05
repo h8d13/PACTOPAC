@@ -273,6 +273,32 @@ class PkgMan(Adw.ApplicationWindow):
             unavailable_row.add_suffix(install_btn)
             flatpak_group.add(unavailable_row)
         
+        update_flatpak_row = Adw.ActionRow(
+            title="Update Flatpak Apps",
+            subtitle="Update all installed Flatpak applications"
+        )
+
+        update_flatpak_btn = Gtk.Button(label="Update")
+        update_flatpak_btn.add_css_class("suggested-action")
+        update_flatpak_btn.set_valign(Gtk.Align.CENTER)
+        update_flatpak_btn.connect("clicked", self.handle_flatpak_update)
+        update_flatpak_row.add_suffix(update_flatpak_btn)
+
+        flatpak_group.add(update_flatpak_row)
+
+        clean_flatpak_row = Adw.ActionRow(
+            title="Clean Flatpak Cache",
+            subtitle="Remove unused Flatpak runtimes and clear cache"
+        )
+
+        clean_flatpak_btn = Gtk.Button(label="Clean")
+        clean_flatpak_btn.add_css_class("destructive-action")
+        clean_flatpak_btn.set_valign(Gtk.Align.CENTER)
+        clean_flatpak_btn.connect("clicked", self.handle_flatpak_cleanup)
+        clean_flatpak_row.add_suffix(clean_flatpak_btn)
+
+        flatpak_group.add(clean_flatpak_row)
+
         # About Page
         about_page = Adw.PreferencesPage(title="About", icon_name="help-about-symbolic")
         dialog.add(about_page)
@@ -304,6 +330,21 @@ class PkgMan(Adw.ApplicationWindow):
         appearance_group.add(theme_row)
 
         dialog.present(self)
+
+    def handle_flatpak_update(self, button):
+        """Update all Flatpak applications"""
+        if self.check_fp():
+            self.run_cmd(['flatpak', 'update', '-y'])
+        else:
+            self.show_error("Flatpak is not installed")
+
+    def handle_flatpak_cleanup(self, button):
+        """Clean Flatpak cache and unused runtimes"""
+        if self.check_fp():
+            # This removes unused runtimes and clears cache
+            self.run_cmd(['flatpak', 'uninstall', '--unused', '-y'])
+        else:
+            self.show_error("Flatpak is not installed")
 
     def handle_clean_orphans(self, button):
         def check_and_clean():
