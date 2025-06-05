@@ -11,3 +11,18 @@ Simple GUI for pacman/flatpak using Subprocess.
 `$ pacman -S python-gobject gtk4 libadwaita`
 
 `$ sudo python3 main.py`
+
+### What ? 
+
+**Settings:**
+
+Enable multi-lib
+Mirrors
+Detect Hardware
+Flatpak 
+Dark/Light mode
+
+**Core features:**
+Subprocess display
+Package info/install/remove/clean
+Search 
