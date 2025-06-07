@@ -48,6 +48,7 @@ def get_cpu():
 
 def get_all_gpus():
     try:
+        print("\n--- Checking GPU ---")
         result = subprocess.run(["lspci", "-nn"], capture_output=True, text=True, check=True)
         gpu_devices = []
         for line in result.stdout.split('\n'):
@@ -110,8 +111,21 @@ def detect_gpu_vendors():
 def detect_form_factor():
     global FORM_FACTOR
     
+    # Print chassis type
     try:
-        # Check for battery
+        print("\n--- Checking FORM ---")
+        result = subprocess.run(["dmidecode", "-s", "chassis-type"], 
+                              capture_output=True, text=True, check=True)
+        print(f"Chassis Type: {result.stdout.strip()}")
+    except:
+        try:
+            with open('/sys/class/dmi/id/chassis_type', 'r') as f:
+                print(f"Chassis Type: {f.read().strip()}")
+        except:
+            print("Chassis Type: Unable to detect")
+    
+    # Check for battery (existing logic)
+    try:
         battery_check = subprocess.run(["ls", "/sys/class/power_supply/"], capture_output=True, text=True)
         if battery_check.returncode == 0 and "BAT" in battery_check.stdout:
             FORM_FACTOR = "laptop"
@@ -124,24 +138,6 @@ def detect_form_factor():
     print(f"Form Factor: {FORM_FACTOR}")
     return FORM_FACTOR
 
-def check_install_package(package_name, auto_install=False):
-    try:
-        result = subprocess.run(["pacman", "-Q", package_name], capture_output=True, text=True, check=True)
-        print(f"✓ {package_name} is already installed: {result.stdout.strip()}")
-        return 'installed'
-    except:
-        print(f"✗ {package_name} is NOT installed")
-        
-        if auto_install:
-            try:
-                subprocess.run(["sudo", "pacman", "-S", "--noconfirm", package_name], check=True)
-                print(f"✓ {package_name} installed successfully")
-                return 'installed_now'
-            except:
-                print(f"✗ Failed to install {package_name}")
-                return 'install_failed'
-        return 'not_installed'
-
 def check_gpu_drivers(vendor, auto_install=False):
     if not DRIVERS_CONFIG:
         return {}
@@ -149,9 +145,7 @@ def check_gpu_drivers(vendor, auto_install=False):
     drivers = DRIVERS_CONFIG["gpu_drivers"].get(vendor, [])
     if not drivers:
         return {}
-    
-    print(f"Checking {vendor} drivers: {', '.join(drivers)}")
-    
+        
     results = {}
     for driver in drivers:
         results[driver] = check_install_package(driver, auto_install)
@@ -159,6 +153,8 @@ def check_gpu_drivers(vendor, auto_install=False):
     return results
 
 def check_microcode(auto_install=False):
+    print("\n--- Checking CPU ---")
+
     cpu_info = get_cpu().upper()
     
     if not DRIVERS_CONFIG:
@@ -188,6 +184,44 @@ def check_power_management(auto_install=False):
     
     return None
 
+def check_audio_utils(auto_install=False):
+    print("\n--- Checking Audio Utils ---")
+    alsa_status = check_install_package("alsa-utils", auto_install)
+    
+    # If alsa-utils is installed or was just installed, try to run aplay -l
+    if alsa_status in ['installed', 'installed_now']:
+        try:
+            result = subprocess.run(["aplay", "-l"], capture_output=True, text=True, check=True)
+            print("For HDMI use alsamixer! F6 select card > Then M to unmute channels.")
+            print("Audio devices (aplay -l):")
+            print(result.stdout)
+        except subprocess.CalledProcessError as e:
+            print(f"✗ aplay command failed: {e}")
+            print("Stderr:", e.stderr)
+        except FileNotFoundError:
+            print("✗ aplay command not found (PATH issue?)")
+    
+    return alsa_status
+
+
+def check_install_package(package_name, auto_install=False):
+    try:
+        result = subprocess.run(["pacman", "-Q", package_name], capture_output=True, text=True, check=True)
+        print(f"✓ {package_name} is already installed: {result.stdout.strip()}")
+        return 'installed'
+    except:
+        print(f"✗ {package_name} is NOT installed")
+        
+        if auto_install:
+            try:
+                subprocess.run(["sudo", "pacman", "-S", "--noconfirm", package_name], check=True)
+                print(f"✓ {package_name} installed successfully")
+                return 'installed_now'
+            except:
+                print(f"✗ Failed to install {package_name}")
+                return 'install_failed'
+        return 'not_installed'
+
 if __name__ == "__main__":
     load_drivers_config()
     
@@ -207,3 +241,5 @@ if __name__ == "__main__":
     for vendor in GPU_VENDORS:
         print(f"\n--- Checking {vendor.upper()} drivers ---")
         check_gpu_drivers(vendor)
+
+    check_audio_utils()
