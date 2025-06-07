@@ -271,27 +271,7 @@ class PkgMan(Adw.ApplicationWindow):
             install_btn.connect("clicked", lambda b: self.install_fp_and_refresh(dialog))
             unavailable_row.add_suffix(install_btn)
             flatpak_group.add(unavailable_row)
-
-        integration_row = Adw.ActionRow(
-            title="Fix KDE Integration",
-            subtitle="Configure system-wide desktop integration for KDE launcher icons"
-        )
-
-        # Check if already configured and set button accordingly
-        if self.check_flatpak_integration():
-            integration_btn = Gtk.Button(label="Configured")
-            integration_btn.set_sensitive(False)
-            integration_btn.add_css_class("success")
-        else:
-            integration_btn = Gtk.Button(label="Fix")
-            integration_btn.add_css_class("suggested-action")
-            integration_btn.connect("clicked", self.fix_flatpak_integration)
-
-        integration_btn.set_valign(Gtk.Align.CENTER)
-        integration_row.add_suffix(integration_btn)
-
-        flatpak_group.add(integration_row)
-
+        
         update_flatpak_row = Adw.ActionRow(
             title="Update Flatpak Apps",
             subtitle="Update all installed Flatpak applications"
@@ -317,6 +297,26 @@ class PkgMan(Adw.ApplicationWindow):
         clean_flatpak_row.add_suffix(clean_flatpak_btn)
 
         flatpak_group.add(clean_flatpak_row)
+
+        integration_row = Adw.ActionRow(
+            title="Fix KDE Integration",
+            subtitle="Configure system-wide desktop integration for KDE launcher icons"
+        )
+
+        # Check if already configured and set button accordingly
+        if self.check_flatpak_integration():
+            integration_btn = Gtk.Button(label="Configured")
+            integration_btn.set_sensitive(False)
+            integration_btn.add_css_class("success")
+        else:
+            integration_btn = Gtk.Button(label="Fix")
+            integration_btn.add_css_class("suggested-action")
+            integration_btn.connect("clicked", self.fix_flatpak_integration)
+
+        integration_btn.set_valign(Gtk.Align.CENTER)
+        integration_row.add_suffix(integration_btn)
+
+        flatpak_group.add(integration_row)
 
         # About Page
         about_page = Adw.PreferencesPage(title="About", icon_name="help-about-symbolic")
