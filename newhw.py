@@ -21,16 +21,6 @@ def get_drivers():
         print("✗ drivers.json not found")
         return False
 
-def get_os_fields(field: str) -> str:
-    try:
-        result = subprocess.run(
-            ["grep", "-oP", fr'(?<=^{field}=)[^\n]*', "/etc/os-release"],
-            capture_output=True, text=True, check=True
-        )
-        return result.stdout.strip()
-    except:
-        return ""
-
 def get_usr():
     is_root = os.geteuid() == 0
     print(f"ROOT: {is_root}")
@@ -226,10 +216,7 @@ if __name__ == "__main__":
     
     get_usr()
     get_ker()
-    dist_val = get_os_fields("ID")
-    dist_fam = get_os_fields("ID_LIKE")
-    print(f"DV:{dist_val} - DF:{dist_fam}")
-    
+
     detect_form_factor()
     check_power_management()
 
