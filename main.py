@@ -236,7 +236,7 @@ class PkgMan(Adw.ApplicationWindow):
             subtitle="Scan CPU, GPU, and form factor; check microcode and driver status"
         )
 
-        hw_detect_btn = Gtk.Button(label="Detect HW")
+        hw_detect_btn = Gtk.Button(label="Detect")
         hw_detect_btn.add_css_class("suggested-action")
         hw_detect_btn.set_valign(Gtk.Align.CENTER)
         hw_detect_btn.connect("clicked", self.on_hardware_detection)
