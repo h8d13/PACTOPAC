@@ -9,7 +9,7 @@ FORM_FACTOR = None
 GPU_VENDORS = []
 DRIVERS_CONFIG = None
 
-def load_drivers_config():
+def get_drivers():
     global DRIVERS_CONFIG
     try:
         config_path = os.path.join(os.path.dirname(__file__), 'drivers.json')
@@ -148,7 +148,7 @@ def check_gpu_drivers(vendor, auto_install=False):
         
     results = {}
     for driver in drivers:
-        results[driver] = check_install_package(driver, auto_install)
+        results[driver] = check_installed(driver, auto_install)
     
     return results
 
@@ -169,7 +169,7 @@ def check_microcode(auto_install=False):
     else:
         return None
     
-    return check_install_package(microcode_pkg, auto_install)
+    return check_installed(microcode_pkg, auto_install)
 
 def check_power_management(auto_install=False):
     if not FORM_FACTOR:
@@ -180,13 +180,13 @@ def check_power_management(auto_install=False):
     
     power_pkg = DRIVERS_CONFIG["power_management"].get(FORM_FACTOR)
     if power_pkg:
-        return check_install_package(power_pkg, auto_install)
+        return check_installed(power_pkg, auto_install)
     
     return None
 
 def check_audio_utils(auto_install=False):
     print("\n--- Checking Audio Utils ---")
-    alsa_status = check_install_package("alsa-utils", auto_install)
+    alsa_status = check_installed("alsa-utils", auto_install)
     
     # If alsa-utils is installed or was just installed, try to run aplay -l
     if alsa_status in ['installed', 'installed_now']:
@@ -203,7 +203,7 @@ def check_audio_utils(auto_install=False):
     
     return alsa_status
 
-def check_install_package(package_name, auto_install=False):
+def check_installed(package_name, auto_install=False):
     try:
         result = subprocess.run(["pacman", "-Q", package_name], capture_output=True, text=True, check=True)
         print(f"✓ {package_name} is already installed: {result.stdout.strip()}")
@@ -222,7 +222,7 @@ def check_install_package(package_name, auto_install=False):
         return 'not_installed'
 
 if __name__ == "__main__":
-    load_drivers_config()
+    get_drivers()
     
     get_usr()
     get_ker()
