@@ -132,7 +132,6 @@ class PkgMan(Adw.ApplicationWindow):
         update_btn = Gtk.Button(label="Update", sensitive=True)
         update_btn.connect("clicked", self.handle_update)
         
-
         clean_orphans_btn = Gtk.Button(label="Clean", sensitive=True)
         clean_orphans_btn.connect("clicked", self.handle_clean_orphans)
         clean_orphans_btn.add_css_class("destructive-action")
@@ -171,7 +170,7 @@ class PkgMan(Adw.ApplicationWindow):
         dialog.set_title("Settings")
         
         # Repository Settings Page
-        repo_page = Adw.PreferencesPage(title="Repositories", icon_name="folder-symbolic")
+        repo_page = Adw.PreferencesPage(title="General", icon_name="folder-symbolic")
         dialog.add(repo_page)
         
         # Pacman repositories
