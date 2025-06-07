@@ -199,7 +199,7 @@ def check_audio_utils(auto_install=False):
             print(f"✗ aplay command failed: {e}")
             print("Stderr:", e.stderr)
         except FileNotFoundError:
-            print("✗ aplay command not found (PATH issue?)")
+            print("✗ aplay command not found.")
     
     return alsa_status
 
