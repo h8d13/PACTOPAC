@@ -444,64 +444,11 @@ class PkgMan(Adw.ApplicationWindow):
         # This gives time for the installation to complete
         GLib.timeout_add(1000, lambda: self.show_settings(None))
 
-    def check_flatpak_integration(self):
-        """Check if Flatpak desktop integration is configured"""
-        try:
-            with open('/etc/environment', 'r') as f:
-                content = f.read()
-                return '/var/lib/flatpak/exports/share' in content
-        except:
-            return False
-
-    def fix_flatpak_integration(self, button):
-        """Apply system-wide Flatpak desktop integration fix"""
-        try:
-            # Read current environment file
-            try:
-                with open('/etc/environment', 'r') as f:
-                    content = f.read()
-            except FileNotFoundError:
-                content = ""
-            
-            # Check if already configured
-            if '/var/lib/flatpak/exports/share' in content:
-                self.show_info("Flatpak integration is already configured!")
-                return
-            
-            # Add or update XDG_DATA_DIRS
-            lines = content.split('\n')
-            xdg_line_found = False
-            
-            for i, line in enumerate(lines):
-                if line.startswith('XDG_DATA_DIRS='):
-                    # Update existing line
-                    if '/var/lib/flatpak/exports/share' not in line:
-                        lines[i] = 'XDG_DATA_DIRS="/var/lib/flatpak/exports/share:/usr/local/share:/usr/share"'
-                    xdg_line_found = True
-                    break
-            
-            if not xdg_line_found:
-                # Add new line
-                lines.append('XDG_DATA_DIRS="/var/lib/flatpak/exports/share:/usr/local/share:/usr/share"')
-            
-            # Write back to file
-            new_content = '\n'.join(lines)
-            with open('/etc/environment', 'w') as f:
-                f.write(new_content)
-            
-            self.show_info("Flatpak integration configured! Please restart your session for KDE launcher icons to appear.")
-            
-        except PermissionError:
-            self.show_error("Permission denied. Make sure you're running with sudo.")
-        except Exception as e:
-            self.show_error(f"Failed to configure Flatpak integration: {e}")
-
     def show_info(self, message):
         """Show info dialog"""
         dialog = Adw.AlertDialog(heading="Info", body=message)
         dialog.add_response("ok", "OK")
         dialog.present(self)
-
 
     def get_current_mirror(self, countries):
         try:
