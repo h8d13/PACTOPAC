@@ -233,10 +233,10 @@ if __name__ == "__main__":
     
     detect_form_factor()
     check_power_management()
-    
-    detect_gpu_vendors()
+
     check_microcode()
-    
+
+    detect_gpu_vendors()    
     # Check drivers for all detected GPUs
     for vendor in GPU_VENDORS:
         print(f"\n--- Checking {vendor.upper()} drivers ---")
