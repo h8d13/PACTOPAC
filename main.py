@@ -271,7 +271,27 @@ class PkgMan(Adw.ApplicationWindow):
             install_btn.connect("clicked", lambda b: self.install_fp_and_refresh(dialog))
             unavailable_row.add_suffix(install_btn)
             flatpak_group.add(unavailable_row)
-        
+
+        integration_row = Adw.ActionRow(
+            title="Fix KDE Integration",
+            subtitle="Configure system-wide desktop integration for KDE launcher icons"
+        )
+
+        # Check if already configured and set button accordingly
+        if self.check_flatpak_integration():
+            integration_btn = Gtk.Button(label="Configured")
+            integration_btn.set_sensitive(False)
+            integration_btn.add_css_class("success")
+        else:
+            integration_btn = Gtk.Button(label="Fix")
+            integration_btn.add_css_class("suggested-action")
+            integration_btn.connect("clicked", self.fix_flatpak_integration)
+
+        integration_btn.set_valign(Gtk.Align.CENTER)
+        integration_row.add_suffix(integration_btn)
+
+        flatpak_group.add(integration_row)
+
         update_flatpak_row = Adw.ActionRow(
             title="Update Flatpak Apps",
             subtitle="Update all installed Flatpak applications"
@@ -412,7 +432,7 @@ class PkgMan(Adw.ApplicationWindow):
                 return bool(re.search(r'^\[multilib\]', f.read(), re.MULTILINE))
         except:
             return False
-            
+        
     def install_fp_and_refresh(self, dialog):
         # Close the current settings dialog
         dialog.close()
@@ -423,6 +443,65 @@ class PkgMan(Adw.ApplicationWindow):
         # Schedule opening a new settings dialog after a short delay
         # This gives time for the installation to complete
         GLib.timeout_add(1000, lambda: self.show_settings(None))
+
+    def check_flatpak_integration(self):
+        """Check if Flatpak desktop integration is configured"""
+        try:
+            with open('/etc/environment', 'r') as f:
+                content = f.read()
+                return '/var/lib/flatpak/exports/share' in content
+        except:
+            return False
+
+    def fix_flatpak_integration(self, button):
+        """Apply system-wide Flatpak desktop integration fix"""
+        try:
+            # Read current environment file
+            try:
+                with open('/etc/environment', 'r') as f:
+                    content = f.read()
+            except FileNotFoundError:
+                content = ""
+            
+            # Check if already configured
+            if '/var/lib/flatpak/exports/share' in content:
+                self.show_info("Flatpak integration is already configured!")
+                return
+            
+            # Add or update XDG_DATA_DIRS
+            lines = content.split('\n')
+            xdg_line_found = False
+            
+            for i, line in enumerate(lines):
+                if line.startswith('XDG_DATA_DIRS='):
+                    # Update existing line
+                    if '/var/lib/flatpak/exports/share' not in line:
+                        lines[i] = 'XDG_DATA_DIRS="/var/lib/flatpak/exports/share:/usr/local/share:/usr/share"'
+                    xdg_line_found = True
+                    break
+            
+            if not xdg_line_found:
+                # Add new line
+                lines.append('XDG_DATA_DIRS="/var/lib/flatpak/exports/share:/usr/local/share:/usr/share"')
+            
+            # Write back to file
+            new_content = '\n'.join(lines)
+            with open('/etc/environment', 'w') as f:
+                f.write(new_content)
+            
+            self.show_info("Flatpak integration configured! Please restart your session for KDE launcher icons to appear.")
+            
+        except PermissionError:
+            self.show_error("Permission denied. Make sure you're running with sudo.")
+        except Exception as e:
+            self.show_error(f"Failed to configure Flatpak integration: {e}")
+
+    def show_info(self, message):
+        """Show info dialog"""
+        dialog = Adw.AlertDialog(heading="Info", body=message)
+        dialog.add_response("ok", "OK")
+        dialog.present(self)
+
 
     def get_current_mirror(self, countries):
         try:
