@@ -203,7 +203,6 @@ def check_audio_utils(auto_install=False):
     
     return alsa_status
 
-
 def check_install_package(package_name, auto_install=False):
     try:
         result = subprocess.run(["pacman", "-Q", package_name], capture_output=True, text=True, check=True)
