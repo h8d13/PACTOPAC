@@ -687,7 +687,7 @@ class PkgMan(Adw.ApplicationWindow):
         self.run_cmd(cmd)
     
     def handle_update(self, button):
-        self.run_cmd(['pacman', '-Syuu', '--noconfirm'])
+        self.run_cmd(['pacman', '-Syu', '--noconfirm'])
     
     def get_total_package_sizes(self):
         try:
