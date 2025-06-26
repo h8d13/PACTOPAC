@@ -331,7 +331,7 @@ class PkgMan(Adw.ApplicationWindow):
         # More style
         style_row = Adw.ActionRow(
             title="Style Configuration",
-            subtitle="Enable color and ILoveCandy animation for pacman operations."
+            subtitle="Enable color and ILoveCandy animation for pacman outputs"
         )
 
         style_btn = Gtk.Button(label="Launch")
