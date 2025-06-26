@@ -1,6 +1,5 @@
 #!/bin/sh
 # update-checker-installer.sh - Run once to set notifications up
-
 CHECK_INTERVAL=7200 # 2H default #86400 for 24h #1800 for 30 mins
 
 SCRIPT_DIR="$HOME/.local/bin"
@@ -15,32 +14,32 @@ cat > "$SCRIPT_DIR/$SCRIPT_NAME" << EOF
 #!/bin/sh
 # Self-contained update checker
 
-command_exists() { command -v "$1" >/dev/null 2>&1; }
+command_exists() { 
+    command -v "\$1" >/dev/null 2>&1
+}
 
 send_notification() {
     if command_exists notify-send; then
-        notify-send "$1" "$2"
-    elif command_exists dunstify; then
-        dunstify "$1" "$2"
+        notify-send "\$1" "\$2"
     else
-        echo "[$1] $2"
+        echo "[\$1] \$2"
     fi
 }
 
 check_updates_safe() {
-    tmpdir=$(mktemp -d)
-    trap "rm -rf $tmpdir" EXIT
+    tmpdir=\$(mktemp -d)
+    trap "rm -rf \$tmpdir" EXIT
     
-    if fakeroot pacman -Sy --dbpath "$tmpdir" --logfile /dev/null >/dev/null 2>&1; then
-        pacman -Qu --dbpath "$tmpdir" 2>/dev/null
+    if fakeroot pacman -Sy --dbpath "\$tmpdir" --logfile /dev/null >/dev/null 2>&1; then
+        pacman -Qu --dbpath "\$tmpdir" 2>/dev/null
     fi
 }
 
 while true; do
-    updates=$(check_updates_safe)
-    if [ -n "$updates" ]; then
-        count=$(echo "$updates" | wc -l)
-        send_notification "Updates" "$count packages available"
+    updates=\$(check_updates_safe)
+    if [ -n "\$updates" ]; then
+        count=\$(echo "\$updates" | wc -l)
+        send_notification "Updates" "\$count packages available"
     else
         send_notification "Updates" "System up to date"
     fi
