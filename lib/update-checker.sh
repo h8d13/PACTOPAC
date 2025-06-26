@@ -1,7 +1,7 @@
 #!/bin/sh
 # update-checker-installer.sh - Run once to set notifications up
 
-CHECK_INTERVAL=1800 # 30 mins default # 86400 for 24h
+CHECK_INTERVAL=7200 # 2H default #86400 for 24h #1800 for 30 mins
 
 SCRIPT_DIR="$HOME/.local/bin"
 AUTOSTART_DIR="$HOME/.config/autostart"
