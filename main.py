@@ -328,6 +328,19 @@ class PkgMan(Adw.ApplicationWindow):
         theme_row.connect("notify::active", self.on_theme_toggle)
         appearance_group.add(theme_row)
 
+        style_row = Adw.ActionRow(
+            title="Style Configuration",
+            subtitle="Enable color and ILoveCandy animation for pacman operations."
+        )
+
+        style_btn = Gtk.Button(label="Launch")
+        style_btn.add_css_class("suggested-action")
+        style_btn.set_valign(Gtk.Align.CENTER)
+        style_btn.connect("clicked", self.on_style_change)
+        style_row.add_suffix(style_btn)
+
+        appearance_group.add(style_row)
+
         dialog.present(self)
 
     def handle_flatpak_update(self, button):
@@ -533,12 +546,19 @@ class PkgMan(Adw.ApplicationWindow):
         GLib.idle_add(self.load_packages)
 
     def on_hardware_detection(self, button):
-        script_path = os.path.join(os.path.dirname(__file__), 'newhw.py')
+        script_path = os.path.join(os.path.dirname(__file__), 'lib/newhw.py')
         if os.path.exists(script_path):
             self.run_cmd(['python3', script_path])
         else:
             self.show_error("Hardware detection script (newhw.py) not found")
-    
+
+    def on_style_change(self, button):
+        script_path = os.path.join(os.path.dirname(__file__), 'lib/stylepac.py')
+        if os.path.exists(script_path):
+            self.run_cmd(['python3', script_path])
+        else:
+            self.show_error("Stylepac script (stylepac.py) not found")
+
     def load_packages(self):
         def load():
             try:
