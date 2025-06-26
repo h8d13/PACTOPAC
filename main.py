@@ -313,7 +313,7 @@ class PkgMan(Adw.ApplicationWindow):
         about_group.add(version_row)
         
         # Appearance group with theme toggle
-        appearance_group = Adw.PreferencesGroup(title="Appearance", description="Customize the look and feel")
+        appearance_group = Adw.PreferencesGroup(title="Appearance", description="Customize look and feel")
         about_page.add(appearance_group)
         
         # Get current theme state
@@ -321,7 +321,7 @@ class PkgMan(Adw.ApplicationWindow):
         is_light = style_manager.get_color_scheme() == Adw.ColorScheme.FORCE_LIGHT
         
         theme_row = Adw.SwitchRow(
-            title="Light Theme",
+            title="Theme Preference",
             subtitle="Switch between light and dark appearance"
         )
         theme_row.set_active(is_light)
