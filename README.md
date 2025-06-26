@@ -19,8 +19,12 @@ $ sudo python3 main.py
 **Settings:**
 > Settings was the most important part for me in this project because they correct things you'd have to do manually.
 
+Pacman Stuff
 - Enable multi-lib
+- Styling
 - Mirrors
+
+Not Pacman Stuff
 - Detect Hardware
 - Flatpak
 
