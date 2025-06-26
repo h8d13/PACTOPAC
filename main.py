@@ -328,6 +328,7 @@ class PkgMan(Adw.ApplicationWindow):
         theme_row.connect("notify::active", self.on_theme_toggle)
         appearance_group.add(theme_row)
 
+        # More style
         style_row = Adw.ActionRow(
             title="Style Configuration",
             subtitle="Enable color and ILoveCandy animation for pacman operations."
@@ -341,7 +342,31 @@ class PkgMan(Adw.ApplicationWindow):
 
         appearance_group.add(style_row)
 
+        resources_group = Adw.PreferencesGroup(title="Resources")
+        about_page.add(resources_group)
+
+        arch_news_row = Adw.ActionRow(
+            title="Arch Linux News",
+            subtitle="https://archlinux.org/news/"
+        )
+
+        clipboard_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy to clipboard")
+        clipboard_btn.set_valign(Gtk.Align.CENTER)
+        clipboard_btn.connect("clicked", self.copy_arch_news_url)
+        arch_news_row.add_suffix(clipboard_btn)
+
+        resources_group.add(arch_news_row)
+
         dialog.present(self)
+
+    def copy_arch_news_url(self, button):
+        """Copy Arch Linux news URL to clipboard"""
+        clipboard = self.get_clipboard()
+        clipboard.set("https://archlinux.org/news/")
+        
+        # Optional: show a brief confirmation
+        button.set_icon_name("object-select-symbolic")
+        GLib.timeout_add(1000, lambda: button.set_icon_name("edit-copy-symbolic"))
 
     def handle_flatpak_update(self, button):
         """Update all Flatpak applications"""
