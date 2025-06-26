@@ -25,7 +25,7 @@ Pacman Stuff
 - Mirrors
 
 Not Pacman Stuff
-- Detect Hardware
+- Detect Hardware (Work in progress)
 - Flatpak
 
 **Core features:**
