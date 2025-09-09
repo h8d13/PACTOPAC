@@ -620,7 +620,7 @@ class PkgMan(Adw.ApplicationWindow):
     def refresh_kde_menu(self):
         """Refresh KDE menu to show newly installed Flatpak applications"""
         try:
-            subprocess.run(['plasmashell', '--replace', '&'], check=False)
+            subprocess.run(['plasmashell', '--replace'], check=False)
         except Exception as e:
             print(f"KDE menu refresh failed: {e}")
 
