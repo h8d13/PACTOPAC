@@ -1713,8 +1713,7 @@ class App(Adw.Application):
             # Show a quick info dialog and quit after user closes it
             dialog = Adw.AlertDialog(
                 heading="Pacman is Already Running",
-                body="A pacman operation is already running on your system.\n\n"
-                     "Please wait for it to finish before launching PacToPac."
+                body="A pacman operation is already running on your system."
             )
             dialog.add_response("ok", "OK")
             # Create a temporary window just to host the dialog
