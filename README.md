@@ -1,6 +1,6 @@
 # Making Arch accessible to anyone <3
 
-## PacToPac 
+## PACTOPAC
 Simple GUI for pacman/flatpak using Subprocess.
 
 ![Screenshot_20250524_173817](https://github.com/user-attachments/assets/377cad96-f707-497a-9729-c949c9626663)
