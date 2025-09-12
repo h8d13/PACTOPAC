@@ -302,6 +302,7 @@ if __name__ == "__main__":
     check_power_management()
 
     check_microcode()
+    check_virtualization_drivers()
 
     detect_gpu_vendors()    
     # Check drivers for all detected GPUs
@@ -310,4 +311,3 @@ if __name__ == "__main__":
         check_gpu_drivers(vendor)
 
     check_audio_utils()
-    check_virtualization_drivers()
