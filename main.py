@@ -1700,7 +1700,7 @@ class App(Adw.Application):
         """Handle application shutdown"""
         if self.window:
             self.window.cleanup_processes()
-        super().do_shutdown()
+        super().do_shutdown(self)
 
 if __name__ == "__main__":
     Adw.init()
