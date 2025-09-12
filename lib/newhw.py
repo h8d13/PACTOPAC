@@ -246,8 +246,6 @@ def run_post_install_commands(category):
     return True
 
 def check_virtualization_drivers(auto_install=False):
-    print("\n--- Checking Virtualization Drivers ---")
-    
     if not DRIVERS_CONFIG:
         return {}
     
