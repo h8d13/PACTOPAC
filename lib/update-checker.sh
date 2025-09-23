@@ -14,7 +14,7 @@ cat > "$SCRIPT_DIR/$SCRIPT_NAME" << EOF
 #!/bin/sh
 # Self-contained update checker
 
-command_exists() { 
+command_exists() {
     command -v "\$1" >/dev/null 2>&1
 }
 
@@ -29,9 +29,13 @@ send_notification() {
 check_updates_safe() {
     tmpdir=\$(mktemp -d)
     trap "rm -rf \$tmpdir" EXIT
-    
-    if fakeroot pacman -Sy --dbpath "\$tmpdir" --logfile /dev/null >/dev/null 2>&1; then
-        pacman -Qu --dbpath "\$tmpdir" 2>/dev/null
+
+    # Copy the local package database
+    cp -r /var/lib/pacman/local "\$tmpdir/" 2>/dev/null
+
+    # Sync the repository databases to temp location
+    if fakeroot pacman -Sy --dbpath "\$tmpdir" --logfile /dev/null --disable-sandbox >/dev/null 2>&1; then
+        pacman -Qu --dbpath "\$tmpdir" --disable-sandbox 2>/dev/null
     fi
 }
 
