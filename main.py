@@ -88,16 +88,14 @@ def is_pacman_running():
     Returns True if pacman is running, False otherwise.
     """
     try:
-        output = subprocess.check_output(['ps', 'aux'], text=True)
-        my_pid = os.getpid()
-        for line in output.splitlines():
-            # Exclude this script and grep, just match pacman
-            if 'pacman' in line and 'grep' not in line and str(my_pid) not in line:
-                print('Pacman pid found!!')
-                return True
-        print('No pacman pid found') 
+        # pgrep -f matches the full command line, -x matches exact process name
+        subprocess.check_output(['pgrep', '-x', 'pacman'], text=True)
+        print('Pacman pid found!!')
+        return True
+    except subprocess.CalledProcessError:
+        # pgrep returns non-zero exit code when no processes found
+        print('No pacman pid found')
         return False
-        
     except Exception as e:
         print(f"Error checking pacman process: {e}")
         return False
