@@ -12,6 +12,16 @@ import urllib.request
 import signal
 import atexit
 
+# Import lazy package functions
+try:
+    from lazy import (check_pacman_contrib, get_package_deps_count,
+                     is_in_ignorepkg, add_to_ignorepkg, remove_from_ignorepkg,
+                     get_packages_with_many_deps)
+    LAZY_AVAILABLE = True
+except ImportError:
+    LAZY_AVAILABLE = False
+    print("Warning: lazy.py not found - dependency analysis features disabled")
+
 countries = [
     ("All Countries", "all"),
     ("Australia", "AU"),
@@ -99,6 +109,25 @@ def is_pacman_running():
     except Exception as e:
         print(f"Error checking pacman process: {e}")
         return False
+
+def detect_distro():
+    """
+    Detect if running on Arch or Artix Linux.
+    Returns 'arch', 'artix', or 'unknown'
+    """
+    try:
+        with open('/etc/os-release', 'r') as f:
+            content = f.read()
+            for line in content.split('\n'):
+                if line.startswith('ID='):
+                    distro_id = line.split('=', 1)[1].strip().strip('"')
+                    if distro_id == 'arch':
+                        return 'arch'
+                    elif distro_id == 'artix':
+                        return 'artix'
+    except:
+        pass
+    return 'unknown'
 
 class PkgMan(Adw.ApplicationWindow):
     def __init__(self, app):
@@ -424,8 +453,13 @@ class PkgMan(Adw.ApplicationWindow):
         pacman_group = Adw.PreferencesGroup(title="Pacman Repositories", description="Configure official Arch Linux repositories")
         repo_page.add(pacman_group)
         
+        # Detect distro for proper repo naming
+        distro = detect_distro()
+        repo_name = "lib32" if distro == "artix" else "multilib"
+        repo_title = f"{repo_name.capitalize()} Repository"
+
         multilib_row = Adw.SwitchRow(
-            title="Multilib Repository", 
+            title=repo_title,
             subtitle="Enable 32-bit package support for games and legacy software"
         )
         multilib_row.set_active(self.check_multilib_enabled())
@@ -490,7 +524,42 @@ class PkgMan(Adw.ApplicationWindow):
         hw_detect_row.add_suffix(hw_detect_btn)
 
         hardware_group.add(hw_detect_row)
-        
+
+        # Dependency Management Group
+        if LAZY_AVAILABLE:
+            dep_group = Adw.PreferencesGroup(
+                title="Dependency Management",
+                description="Analyze and manage packages with many dependencies using IgnorePkg"
+            )
+            repo_page.add(dep_group)
+
+            # Check if pacman-contrib is installed
+            has_contrib = check_pacman_contrib()
+
+            if not has_contrib:
+                contrib_row = Adw.ActionRow(
+                    title="pacman-contrib Required",
+                    subtitle="Install pacman-contrib to enable dependency analysis (provides pactree)"
+                )
+                install_contrib_btn = Gtk.Button(label="Install")
+                install_contrib_btn.add_css_class("suggested-action")
+                install_contrib_btn.set_valign(Gtk.Align.CENTER)
+                install_contrib_btn.connect("clicked", lambda b: self.install_pacman_contrib(dialog))
+                contrib_row.add_suffix(install_contrib_btn)
+                dep_group.add(contrib_row)
+            else:
+                # Show button to analyze packages
+                analyze_row = Adw.ActionRow(
+                    title="Analyze Heavy Packages",
+                    subtitle="Find packages with many dependencies and manage IgnorePkg"
+                )
+                analyze_btn = Gtk.Button(label="Analyze")
+                analyze_btn.add_css_class("suggested-action")
+                analyze_btn.set_valign(Gtk.Align.CENTER)
+                analyze_btn.connect("clicked", self.show_dependency_analysis)
+                analyze_row.add_suffix(analyze_btn)
+                dep_group.add(analyze_row)
+
         # Flatpak Settings Page
         flatpak_page = Adw.PreferencesPage(title="Flatpak", icon_name="application-x-addon-symbolic")
         dialog.add(flatpak_page)
@@ -748,11 +817,28 @@ class PkgMan(Adw.ApplicationWindow):
             return False
     
     def check_multilib_enabled(self):
+        """Check if multilib is enabled (works for both Arch and Artix)"""
         try:
             with open('/etc/pacman.conf', 'r') as f:
-                return bool(re.search(r'^\[multilib\]', f.read(), re.MULTILINE))
+                content = f.read()
+                distro = detect_distro()
+
+                if distro == 'artix':
+                    # Artix uses [lib32]
+                    return bool(re.search(r'^\[lib32\]', content, re.MULTILINE))
+                else:
+                    # Arch uses [multilib]
+                    return bool(re.search(r'^\[multilib\]', content, re.MULTILINE))
         except:
             return False
+
+    def get_multilib_repo_name(self):
+        """Get the appropriate multilib repository name based on distro"""
+        distro = detect_distro()
+        if distro == 'artix':
+            return 'lib32'
+        else:
+            return 'multilib'
         
     def install_fp_and_refresh(self, dialog):
         # Close the current settings dialog
@@ -898,11 +984,15 @@ class PkgMan(Adw.ApplicationWindow):
     
     def on_multilib_toggle(self, switch_row, param):
         enabled = switch_row.get_active()
+        repo_name = self.get_multilib_repo_name()
+
         if enabled:
-            self.run_toggle(True, ['sed', '-i', '/^#\\[multilib\\]/{s/^#//;n;s/^#//}', '/etc/pacman.conf'], None)
+            # Enable the multilib/lib32 repo by uncommenting
+            self.run_toggle(True, ['sed', '-i', f'/^#\\[{repo_name}\\]/{{s/^#//;n;s/^#//}}', '/etc/pacman.conf'], None)
             subprocess.run(['pacman', '-Sy'], check=True)
         else:
-            self.run_toggle(False, None, ['sed', '-i', '/^\\[multilib\\]/{s/^/#/;n;s/^/#/}', '/etc/pacman.conf'])
+            # Disable the multilib/lib32 repo by commenting out
+            self.run_toggle(False, None, ['sed', '-i', f'/^\\[{repo_name}\\]/{{s/^/#/;n;s/^/#/}}', '/etc/pacman.conf'])
     
     def on_fh_toggle(self, switch_row, param):
         enabled = switch_row.get_active()
@@ -1697,6 +1787,169 @@ class PkgMan(Adw.ApplicationWindow):
                 GLib.idle_add(lambda: progress.add_css_class("error"))
         
         threading.Thread(target=run, daemon=True).start()
+
+    def install_pacman_contrib(self, dialog):
+        """Install pacman-contrib and refresh settings dialog"""
+        dialog.close()
+
+        def check_and_reopen():
+            """Poll for installation completion and reopen settings"""
+            def check_installation_complete():
+                if LAZY_AVAILABLE and check_pacman_contrib():
+                    # pacman-contrib is now installed
+                    self.show_settings(None)
+                    return False  # Stop the timeout
+                else:
+                    return True  # Continue checking
+
+            # Start polling every 500ms for installation completion
+            GLib.timeout_add(500, check_installation_complete)
+
+        # Install pacman-contrib
+        self.run_cmd(['pacman', '-S', '--noconfirm', 'pacman-contrib'])
+        GLib.timeout_add(100, lambda: check_and_reopen() or False)
+
+    def show_dependency_analysis(self, button):
+        """Show dialog with packages that have many dependencies"""
+        # Create a new dialog window
+        dialog = Adw.Window(title="Dependency Analysis", transient_for=self, modal=True)
+        dialog.set_default_size(700, 500)
+
+        toolbar_view = Adw.ToolbarView()
+        dialog.set_content(toolbar_view)
+
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
+
+        # Show loading spinner initially
+        spinner = Gtk.Spinner(spinning=True)
+        loading_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                             halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+        loading_box.append(spinner)
+        loading_box.append(Gtk.Label(label="Analyzing dependencies..."))
+        toolbar_view.set_content(loading_box)
+        dialog.present()
+
+        def analyze():
+            """Run analysis in background thread"""
+            if not LAZY_AVAILABLE:
+                GLib.idle_add(self.show_error, "Lazy module not available")
+                GLib.idle_add(dialog.close)
+                return
+
+            # Get packages with 50+ dependencies
+            heavy_packages = get_packages_with_many_deps(threshold=50)
+
+            GLib.idle_add(self.display_dependency_results, toolbar_view, heavy_packages)
+
+        threading.Thread(target=analyze, daemon=True).start()
+
+    def display_dependency_results(self, toolbar_view, heavy_packages):
+        """Display the dependency analysis results"""
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_box.set_margin_top(12)
+        content_box.set_margin_bottom(12)
+        content_box.set_margin_start(12)
+        content_box.set_margin_end(12)
+
+        if not heavy_packages:
+            # No heavy packages found
+            empty_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                               halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+            icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
+            icon.set_pixel_size(64)
+            icon.add_css_class("success")
+            empty_box.append(icon)
+
+            title = Gtk.Label(label="No Heavy Packages Found")
+            title.add_css_class("title-2")
+            empty_box.append(title)
+
+            subtitle = Gtk.Label(label="All packages have fewer than 50 dependencies")
+            subtitle.add_css_class("dim-label")
+            empty_box.append(subtitle)
+
+            toolbar_view.set_content(empty_box)
+        else:
+            # Show list of heavy packages
+            info_label = Gtk.Label(
+                label=f"Found {len(heavy_packages)} packages with 50+ dependencies",
+                halign=Gtk.Align.START
+            )
+            info_label.add_css_class("heading")
+            content_box.append(info_label)
+
+            scroll = Gtk.ScrolledWindow(vexpand=True)
+            scroll.add_css_class("card")
+
+            listbox = Gtk.ListBox()
+            listbox.add_css_class("boxed-list")
+
+            for pkg_name, dep_count in heavy_packages:
+                row = Adw.ActionRow(
+                    title=pkg_name,
+                    subtitle=f"{dep_count} dependencies"
+                )
+
+                # Check if already in IgnorePkg
+                if is_in_ignorepkg(pkg_name):
+                    # Show remove button
+                    remove_btn = Gtk.Button(label="Remove from IgnorePkg")
+                    remove_btn.set_valign(Gtk.Align.CENTER)
+                    remove_btn.connect("clicked", lambda b, pkg=pkg_name: self.handle_remove_ignorepkg(b, pkg))
+                    row.add_suffix(remove_btn)
+
+                    # Add indicator
+                    indicator = Gtk.Label(label="🔒")
+                    indicator.set_tooltip_text("In IgnorePkg")
+                    row.add_suffix(indicator)
+                else:
+                    # Show add button
+                    add_btn = Gtk.Button(label="Add to IgnorePkg")
+                    add_btn.add_css_class("suggested-action")
+                    add_btn.set_valign(Gtk.Align.CENTER)
+                    add_btn.connect("clicked", lambda b, pkg=pkg_name: self.handle_add_ignorepkg(b, pkg))
+                    row.add_suffix(add_btn)
+
+                listbox.append(row)
+
+            scroll.set_child(listbox)
+            content_box.append(scroll)
+
+            toolbar_view.set_content(content_box)
+
+        return False
+
+    def handle_add_ignorepkg(self, button, package_name):
+        """Add package to IgnorePkg"""
+        if LAZY_AVAILABLE and add_to_ignorepkg(package_name):
+            button.set_label("✓ Added")
+            button.set_sensitive(False)
+            # Update button after 1 second
+            GLib.timeout_add(1000, lambda: self.update_ignorepkg_button(button, package_name, True))
+        else:
+            self.show_error(f"Failed to add {package_name} to IgnorePkg")
+
+    def handle_remove_ignorepkg(self, button, package_name):
+        """Remove package from IgnorePkg"""
+        if LAZY_AVAILABLE and remove_from_ignorepkg(package_name):
+            button.set_label("✓ Removed")
+            button.set_sensitive(False)
+            # Update button after 1 second
+            GLib.timeout_add(1000, lambda: self.update_ignorepkg_button(button, package_name, False))
+        else:
+            self.show_error(f"Failed to remove {package_name} from IgnorePkg")
+
+    def update_ignorepkg_button(self, button, package_name, was_added):
+        """Update button state after add/remove operation"""
+        if was_added:
+            button.set_label("Remove from IgnorePkg")
+            button.remove_css_class("suggested-action")
+        else:
+            button.set_label("Add to IgnorePkg")
+            button.add_css_class("suggested-action")
+        button.set_sensitive(True)
+        return False
 
 class App(Adw.Application):
     def __init__(self):
