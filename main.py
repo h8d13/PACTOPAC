@@ -791,8 +791,8 @@ class PkgMan(Adw.ApplicationWindow):
 
     def on_cache_clean_response(self, dialog, response):
         if response == "partial":
-            # pacman -Sc: removes old versions, keeps current
-            self.run_cmd(['pacman', '-Sc', '--noconfirm'])
+            # paccache -r: removes old versions, keeps last 3 of each package
+            self.run_cmd(['paccache', '-r'])
         elif response == "full":
             # pacman -Scc: removes all cached packages
             self.run_cmd(['pacman', '-Scc', '--noconfirm'])
