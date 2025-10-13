@@ -148,6 +148,7 @@ class PkgMan(Adw.ApplicationWindow):
         self.current_tab = "installed"  # Default to installed tab
         self.running_processes = []  # Track running pacman/flatpak processes
         self.setup_cleanup_handlers()
+        self.ensure_noextract_mirrorlist()
         self.setup_ui()
         self.load_packages()
         self.start_process_monitor()
@@ -796,6 +797,35 @@ class PkgMan(Adw.ApplicationWindow):
         elif response == "full":
             # pacman -Scc: removes all cached packages
             self.run_cmd(['pacman', '-Scc', '--noconfirm'])
+
+    def ensure_noextract_mirrorlist(self):
+        """Ensure NoExtract is set for mirrorlist to prevent .pacnew conflicts"""
+        try:
+            with open('/etc/pacman.conf', 'r') as f:
+                lines = f.readlines()
+
+            # Check if NoExtract for mirrorlist already exists
+            content = ''.join(lines)
+            if 'NoExtract' in content and 'etc/pacman.d/mirrorlist' in content:
+                return  # Already configured
+
+            # Find #NoExtract line and uncomment/set it
+            new_lines = []
+            added = False
+
+            for line in lines:
+                if line.strip() == '#NoExtract   =' and not added:
+                    new_lines.append('NoExtract   = etc/pacman.d/mirrorlist\n')
+                    added = True
+                else:
+                    new_lines.append(line)
+
+            if added:
+                with open('/etc/pacman.conf', 'w') as f:
+                    f.writelines(new_lines)
+        except Exception as e:
+            # Silent fail - not critical
+            pass
 
     def check_fp(self):
         try:
