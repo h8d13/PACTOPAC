@@ -950,6 +950,11 @@ class PkgMan(Adw.ApplicationWindow):
         except:
             return False  # Default to dark theme
 
+    def is_first_run(self):
+        """Check if this is the first run by checking if theme config exists"""
+        config_file = os.path.expanduser("~/.config/pactopac/theme")
+        return not os.path.exists(config_file)
+
     def on_theme_toggle(self, switch_row, param):
         style_manager = Adw.StyleManager.get_default()
         is_light = switch_row.get_active()
@@ -2059,6 +2064,12 @@ class App(Adw.Application):
         self.window = PkgMan(self)
         self.window.set_icon_name("package-x-generic")
         self.window.present()
+
+        # Open settings on first run
+        if self.window.is_first_run():
+            # Create the theme file so this only happens once
+            self.window.save_theme_pref(False)  # Save dark as default
+            GLib.idle_add(lambda: self.window.show_settings(None) or False)
 
     def do_shutdown(self):
         """Handle application shutdown"""
