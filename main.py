@@ -215,8 +215,8 @@ class PkgMan(Adw.ApplicationWindow):
                 return False  # Stop monitoring
             return True  # Continue monitoring
         
-        # Check every second
-        GLib.timeout_add(1000, check_processes)
+        # Check every ,5second
+        GLib.timeout_add(500, check_processes)
     
     def cleanup_processes(self):
         """Cleanup all running processes and remove lock files if necessary"""
@@ -261,7 +261,7 @@ class PkgMan(Adw.ApplicationWindow):
 
             return True  # Continue monitoring
 
-        # Update every 3 seconds (less frequent)
+        # Update every 0,5 second
         GLib.timeout_add(500, update_process_indicator)
     
     def setup_ui(self):
@@ -515,27 +515,6 @@ class PkgMan(Adw.ApplicationWindow):
         generate_row.add_suffix(generate_btn)
         
         mirror_group.add(generate_row)
-
-        # Hardware Detection Group
-        hardware_group = Adw.PreferencesGroup(
-            title="Hardware Detection", 
-            description="Analyze system hardware and check driver installation"
-        )
-        repo_page.add(hardware_group)
-
-        # Hardware detection row
-        hw_detect_row = Adw.ActionRow(
-            title="Detect Hardware",
-            subtitle="Scan CPU, GPU, and form factor; check microcode and driver status"
-        )
-
-        hw_detect_btn = Gtk.Button(label="Detect")
-        hw_detect_btn.add_css_class("suggested-action")
-        hw_detect_btn.set_valign(Gtk.Align.CENTER)
-        hw_detect_btn.connect("clicked", self.on_hardware_detection)
-        hw_detect_row.add_suffix(hw_detect_btn)
-
-        hardware_group.add(hw_detect_row)
 
         # Dependency Management Group
         if LAZY_AVAILABLE:
@@ -1046,13 +1025,6 @@ class PkgMan(Adw.ApplicationWindow):
             self.run_toggle(False, None, ['flatpak', 'remote-modify', '--disable', 'flathub'])
         
         GLib.idle_add(self.load_packages)
-
-    def on_hardware_detection(self, button):
-        script_path = os.path.join(os.path.dirname(__file__), 'lib/newhw.py')
-        if os.path.exists(script_path):
-            self.run_cmd(['python3', script_path])
-        else:
-            self.show_error("Hardware detection script (newhw.py) not found")
 
     def check_pacman_styling_enabled(self):
         """Check if pacman styling (Color and ILoveCandy) is enabled"""
