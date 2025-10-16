@@ -2,7 +2,8 @@
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib
+gi.require_version('Vte', '3.91')
+from gi.repository import Gtk, Adw, GLib, Vte
 import subprocess
 import threading
 import os
@@ -1745,78 +1746,145 @@ class PkgMan(Adw.ApplicationWindow):
     def run_cmd(self, cmd):
         dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
         dialog.set_default_size(800, 600)
-        
+
         toolbar_view = Adw.ToolbarView()
-        toolbar_view.add_top_bar(Adw.HeaderBar())
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
         dialog.set_content(toolbar_view)
-        
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        content_box.set_margin_top(12)
-        content_box.set_margin_bottom(12)
-        content_box.set_margin_start(12)
-        content_box.set_margin_end(12)
-        
-        progress = Gtk.ProgressBar(show_text=True, text="Starting...")
-        content_box.append(progress)
-        
-        scroll = Gtk.ScrolledWindow(vexpand=True)
-        text = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR)
-        text.set_left_margin(6)
-        text.set_right_margin(6)
-        scroll.set_child(text)
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Create VTE terminal widget
+        terminal = Vte.Terminal()
+        terminal.set_scroll_on_output(True)
+        terminal.set_scrollback_lines(10000)
+        terminal.set_mouse_autohide(True)
+
+        # Apply terminal styling
+        terminal.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
+
+        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        scroll.set_child(terminal)
         content_box.append(scroll)
-        
+
+        # Status bar at bottom
+        status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        status_box.set_margin_top(12)
+        status_box.set_margin_bottom(12)
+        status_box.set_margin_start(12)
+        status_box.set_margin_end(12)
+
+        progress = Gtk.ProgressBar(show_text=False)
+        progress.set_size_request(120, -1)
+        progress.set_valign(Gtk.Align.CENTER)
+        status_box.append(progress)
+
+        status_label = Gtk.Label(label="Running command...", halign=Gtk.Align.START, hexpand=True)
+        status_label.add_css_class("dim-label")
+        status_box.append(status_label)
+
+        content_box.append(status_box)
+
         toolbar_view.set_content(content_box)
         dialog.present()
-        
-        def run():
-            proc = None
-            try:
-                pulse_id = GLib.timeout_add(100, lambda: progress.pulse() or True)
-                
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1)
-                self.running_processes.append(proc)  # Track the process
-                buf = text.get_buffer()
-                
-                GLib.idle_add(lambda: progress.set_text("Running, please wait..."))
-                
-                def insert_and_scroll(line):
-                    buf.insert(buf.get_end_iter(), line)
-                    # Auto-scroll to the end
-                    mark = buf.get_insert()
-                    text.scroll_mark_onscreen(mark)
-                
-                for line in iter(proc.stdout.readline, ''):
-                    GLib.idle_add(lambda l=line: insert_and_scroll(l))
-                
-                proc.wait()
-                GLib.source_remove(pulse_id)
-                
-                # Remove process from tracking list when done
-                if proc in self.running_processes:
-                    self.running_processes.remove(proc)
-                
-                success = proc.returncode == 0
-                result = "✓ Success" if success else f"✗ Failed ({proc.returncode})"
-                
-                GLib.idle_add(lambda: progress.set_fraction(1.0))
-                GLib.idle_add(lambda: progress.set_text(result))
-                GLib.idle_add(lambda: progress.add_css_class("success" if success else "error"))
-                GLib.idle_add(lambda: insert_and_scroll(f"\n{result}"))
-                
-                if success:
-                    GLib.idle_add(self.load_packages)
-                    
-            except Exception as e:
-                if 'pulse_id' in locals():
-                    GLib.source_remove(pulse_id)
-                # Remove process from tracking list on error
-                if proc and proc in self.running_processes:
-                    self.running_processes.remove(proc)
-                GLib.idle_add(lambda: progress.set_text("Error"))
+
+        # Start progress bar pulsing
+        pulse_id = GLib.timeout_add(100, lambda: progress.pulse() or True)
+
+        # Track terminal PID for cleanup
+        terminal_pid = None
+
+        def on_child_exited(term, status):
+            nonlocal terminal_pid
+
+            # Stop progress bar pulsing and set to full
+            GLib.source_remove(pulse_id)
+            GLib.idle_add(lambda: progress.set_fraction(1.0))
+
+            # Update status and progress bar color
+            if status == 0:
+                GLib.idle_add(lambda: progress.add_css_class("success"))
+                GLib.idle_add(lambda: status_label.set_text("✓ Success"))
+                GLib.idle_add(self.load_packages)
+            else:
                 GLib.idle_add(lambda: progress.add_css_class("error"))
-        
-        threading.Thread(target=run, daemon=True).start()
+                GLib.idle_add(lambda: status_label.set_text(f"✗ Error (exit code: {status})"))
+
+            # Remove from running processes
+            if terminal_pid and terminal_pid in [p.pid for p in self.running_processes if hasattr(p, 'pid')]:
+                self.running_processes[:] = [p for p in self.running_processes if not (hasattr(p, 'pid') and p.pid == terminal_pid)]
+
+        terminal.connect("child-exited", on_child_exited)
+
+        # Spawn command in terminal
+        try:
+            terminal.spawn_async(
+                Vte.PtyFlags.DEFAULT,
+                None,  # working directory (None = inherit)
+                cmd,   # command and args
+                None,  # environment (None = inherit)
+                GLib.SpawnFlags.DEFAULT,
+                None,  # child setup
+                None,  # child setup data
+                -1,    # timeout (-1 = no timeout)
+                None,  # cancellable
+                self.on_terminal_spawn_callback,  # callback
+                (terminal, status_label, pulse_id, progress)  # user data
+            )
+        except Exception as e:
+            GLib.source_remove(pulse_id)
+            progress.set_fraction(1.0)
+            progress.add_css_class("error")
+            status_label.set_text(f"✗ Failed to spawn command: {e}")
+
+    def on_terminal_spawn_callback(self, terminal, pid, error, user_data):
+        """Callback when terminal spawn completes"""
+        term, status_label, pulse_id, progress = user_data
+
+        if error:
+            GLib.source_remove(pulse_id)
+            GLib.idle_add(lambda: progress.set_fraction(1.0))
+            GLib.idle_add(lambda: progress.add_css_class("error"))
+            GLib.idle_add(lambda: status_label.set_text(f"✗ Error: {error}"))
+            return
+
+        # Create a pseudo-process object for tracking
+        class TerminalProcess:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def poll(self):
+                # Check if process is still running
+                try:
+                    os.kill(self.pid, 0)
+                    return None  # Still running
+                except OSError:
+                    return 0  # Process finished
+
+            def terminate(self):
+                try:
+                    os.kill(self.pid, signal.SIGTERM)
+                except OSError:
+                    pass
+
+            def kill(self):
+                try:
+                    os.kill(self.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+
+            def wait(self, timeout=None):
+                # Simple wait implementation
+                import time
+                start = time.time()
+                while self.poll() is None:
+                    if timeout and (time.time() - start) > timeout:
+                        raise subprocess.TimeoutExpired(self.pid, timeout)
+                    time.sleep(0.1)
+
+        # Track the process
+        proc_obj = TerminalProcess(pid)
+        self.running_processes.append(proc_obj)
 
     def install_pacman_contrib(self, dialog):
         """Install pacman-contrib and refresh settings dialog"""
