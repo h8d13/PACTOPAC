@@ -148,6 +148,7 @@ class PkgMan(Adw.ApplicationWindow):
         self.current_page = 0
         self.current_tab = "installed"  # Default to installed tab
         self.running_processes = []  # Track running pacman/flatpak processes
+        self._cleanup_done = False  # Flag to prevent duplicate cleanup
         self.setup_cleanup_handlers()
         self.ensure_noextract_mirrorlist()
         self.setup_ui()
@@ -219,40 +220,49 @@ class PkgMan(Adw.ApplicationWindow):
     
     def cleanup_processes(self):
         """Cleanup all running processes and remove lock files if necessary"""
-        print("Cleaning up running processes...")
-        
-        for proc in self.running_processes[:]:  # Copy list to avoid modification during iteration
-            try:
-                if proc.poll() is None:  # Process is still running
-                    print(f"Terminating process PID {proc.pid}")
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)  # Wait up to 5 seconds for graceful termination
-                    except subprocess.TimeoutExpired:
-                        print(f"Force killing process PID {proc.pid}")
-                        proc.kill()
-                        proc.wait()
-                self.running_processes.remove(proc)
-            except Exception as e:
-                print(f"Error cleaning up process: {e}")
+        if not hasattr(self, '_cleanup_done') or not self._cleanup_done:
+            self._cleanup_done = True
+
+            if self.running_processes:
+                print("Cleaning up running processes...")
+
+            for proc in self.running_processes[:]:  # Copy list to avoid modification during iteration
+                try:
+                    if proc.poll() is None:  # Process is still running
+                        print(f"Terminating process PID {proc.pid}")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)  # Wait up to 5 seconds for graceful termination
+                        except subprocess.TimeoutExpired:
+                            print(f"Force killing process PID {proc.pid}")
+                            proc.kill()
+                            proc.wait()
+                    self.running_processes.remove(proc)
+                except Exception as e:
+                    print(f"Error cleaning up process: {e}")
         
     def start_process_monitor(self):
         """Start monitoring running processes for UI updates"""
         def update_process_indicator():
+            # Only check if we have processes
+            if not self.running_processes:
+                self.process_indicator.set_text("")
+                return True
+
             active_processes = [proc for proc in self.running_processes if proc.poll() is None]
             count = len(active_processes)
-            
+
             if count > 0:
                 self.process_indicator.set_text(f"🔄 {count} running")
                 self.process_indicator.add_css_class("accent")
             else:
                 self.process_indicator.set_text("")
                 self.process_indicator.remove_css_class("accent")
-            
+
             return True  # Continue monitoring
-        
-        # Update every 2 seconds
-        GLib.timeout_add(2000, update_process_indicator)
+
+        # Update every 3 seconds (less frequent)
+        GLib.timeout_add(500, update_process_indicator)
     
     def setup_ui(self):
         toolbar_view = Adw.ToolbarView()
