@@ -616,7 +616,7 @@ class PkgMan(Adw.ApplicationWindow):
         app_row = Adw.ActionRow(title="PacToPac", subtitle="Suckless Arch Linux package manager")
         about_group.add(app_row)
         
-        version_row = Adw.ActionRow(title="Version", subtitle="1.0.5")
+        version_row = Adw.ActionRow(title="Version", subtitle="1.0.6")
         about_group.add(version_row)
         
         # Appearance group with theme toggle
