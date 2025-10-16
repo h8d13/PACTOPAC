@@ -9,7 +9,6 @@ import threading
 import os
 import sys
 import re
-import urllib.request
 import signal
 import atexit
 
@@ -22,76 +21,6 @@ try:
 except ImportError:
     LAZY_AVAILABLE = False
     print("Warning: lazy.py not found - dependency analysis features disabled")
-
-countries = [
-    ("All Countries", "all"),
-    ("Australia", "AU"),
-    ("Austria", "AT"),
-    ("Bangladesh", "BD"),
-    ("Belarus", "BY"),
-    ("Belgium", "BE"),
-    ("Bosnia and Herzegovina", "BA"),
-    ("Brazil", "BR"),
-    ("Bulgaria", "BG"),
-    ("Canada", "CA"),
-    ("Chile", "CL"),
-    ("China", "CN"),
-    ("Colombia", "CO"),
-    ("Croatia", "HR"),
-    ("Czech Republic", "CZ"),
-    ("Denmark", "DK"),
-    ("Ecuador", "EC"),
-    ("Estonia", "EE"),
-    ("Finland", "FI"),
-    ("France", "FR"),
-    ("Georgia", "GE"),
-    ("Germany", "DE"),
-    ("Greece", "GR"),
-    ("Hong Kong", "HK"),
-    ("Hungary", "HU"),
-    ("Iceland", "IS"),
-    ("India", "IN"),
-    ("Indonesia", "ID"),
-    ("Iran", "IR"),
-    ("Ireland", "IE"),
-    ("Israel", "IL"),
-    ("Italy", "IT"),
-    ("Japan", "JP"),
-    ("Kazakhstan", "KZ"),
-    ("Kenya", "KE"),
-    ("Latvia", "LV"),
-    ("Lithuania", "LT"),
-    ("Luxembourg", "LU"),
-    ("Mexico", "MX"),
-    ("Moldova", "MD"),
-    ("Netherlands", "NL"),
-    ("New Caledonia", "NC"),
-    ("New Zealand", "NZ"),
-    ("North Macedonia", "MK"),
-    ("Norway", "NO"),
-    ("Pakistan", "PK"),
-    ("Paraguay", "PY"),
-    ("Poland", "PL"),
-    ("Portugal", "PT"),
-    ("Romania", "RO"),
-    ("Russia", "RU"),
-    ("Serbia", "RS"),
-    ("Singapore", "SG"),
-    ("Slovakia", "SK"),
-    ("Slovenia", "SI"),
-    ("South Africa", "ZA"),
-    ("South Korea", "KR"),
-    ("Spain", "ES"),
-    ("Sweden", "SE"),
-    ("Switzerland", "CH"),
-    ("Taiwan", "TW"),
-    ("Thailand", "TH"),
-    ("Turkey", "TR"),
-    ("Ukraine", "UA"),
-    ("United Kingdom", "GB"),
-    ("United States", "US"),
-    ("Vietnam", "VN")
-]
 
 def is_pacman_running():
     """
@@ -150,7 +79,6 @@ class PkgMan(Adw.ApplicationWindow):
         self.running_processes = []  # Track running pacman/flatpak processes
         self._cleanup_done = False  # Flag to prevent duplicate cleanup
         self.setup_cleanup_handlers()
-        self.ensure_noextract_mirrorlist()
         self.setup_ui()
         self.load_packages()
         self.start_process_monitor()
@@ -477,44 +405,6 @@ class PkgMan(Adw.ApplicationWindow):
         multilib_row.set_active(self.check_multilib_enabled())
         multilib_row.connect("notify::active", self.on_multilib_toggle)
         pacman_group.add(multilib_row)
-        
-        # Mirror settings
-        mirror_group = Adw.PreferencesGroup(title="Mirror Configuration", description="Optimize package download speeds by location")
-        repo_page.add(mirror_group)
-        
-        # Country selection
-        country_row = Adw.ComboRow(
-            title="Mirror Country",
-            subtitle="Select your country or region, HTTPS/IPv4 default"
-        )
-        country_model = Gtk.StringList()
-    
-        for name, code in countries:
-            country_model.append(name)
-        country_row.set_model(country_model)
-    
-        # Set the current selection based on mirrorlist
-        current_country = self.get_current_mirror(countries)
-        for i, (name, code) in enumerate(countries):
-            if name == current_country:
-                country_row.set_selected(i)
-                break
-    
-        mirror_group.add(country_row)
-    
-        # Generate button
-        generate_row = Adw.ActionRow(
-            title="Update Mirrorlist",
-            subtitle="Generate and apply new mirrorlist for selected country"
-        )
-    
-        generate_btn = Gtk.Button(label="Generate")
-        generate_btn.add_css_class("suggested-action")
-        generate_btn.set_valign(Gtk.Align.CENTER)
-        generate_btn.connect("clicked", lambda b: self.generate_mirrorlist(countries[country_row.get_selected()][1]))
-        generate_row.add_suffix(generate_btn)
-        
-        mirror_group.add(generate_row)
 
         # Dependency Management Group
         if LAZY_AVAILABLE:
@@ -606,7 +496,7 @@ class PkgMan(Adw.ApplicationWindow):
         flatpak_group.add(clean_flatpak_row)
 
         # About Page
-        about_page = Adw.PreferencesPage(title="About", icon_name="help-about-symbolic")
+        about_page = Adw.PreferencesPage(title="Misc", icon_name="help-about-symbolic")
         dialog.add(about_page)
         
         # App info group
@@ -788,35 +678,6 @@ class PkgMan(Adw.ApplicationWindow):
             # pacman -Scc: removes all cached packages
             self.run_cmd(['pacman', '-Scc', '--noconfirm'])
 
-    def ensure_noextract_mirrorlist(self):
-        """Ensure NoExtract is set for mirrorlist to prevent .pacnew conflicts"""
-        try:
-            with open('/etc/pacman.conf', 'r') as f:
-                lines = f.readlines()
-
-            # Check if NoExtract for mirrorlist already exists
-            content = ''.join(lines)
-            if 'NoExtract' in content and 'etc/pacman.d/mirrorlist' in content:
-                return  # Already configured
-
-            # Find #NoExtract line and uncomment/set it
-            new_lines = []
-            added = False
-
-            for line in lines:
-                if line.strip() == '#NoExtract   =' and not added:
-                    new_lines.append('NoExtract   = etc/pacman.d/mirrorlist\n')
-                    added = True
-                else:
-                    new_lines.append(line)
-
-            if added:
-                with open('/etc/pacman.conf', 'w') as f:
-                    f.writelines(new_lines)
-        except Exception as e:
-            # Silent fail - not critical
-            pass
-
     def check_fp(self):
         try:
             cmd = (['flatpak', '--version'])
@@ -897,43 +758,6 @@ class PkgMan(Adw.ApplicationWindow):
         dialog.add_response("ok", "OK")
         dialog.present(self)
 
-    def get_current_mirror(self, countries):
-        try:
-            with open('/etc/pacman.d/mirrorlist', 'r') as f:
-                lines = f.readlines()
-            
-            # Count active servers per country section
-            country_server_counts = {}
-            current_country = None
-            
-            for line in lines:
-                line = line.strip()
-                
-                # Check for country section headers
-                if line.startswith('## '):
-                    country_name = line[3:].strip()  # Remove "## " prefix
-                    # Match against our countries list
-                    for name, code in countries:
-                        if name.lower() == country_name.lower():
-                            current_country = name
-                            country_server_counts[name] = 0
-                            break
-                    else:
-                        current_country = None
-                
-                # Count active servers (uncommented Server = lines)
-                elif line.startswith('Server = ') and current_country:
-                    country_server_counts[current_country] += 1
-            
-            # Return the country with the most active servers
-            if country_server_counts:
-                return max(country_server_counts, key=country_server_counts.get)
-            
-            return 'All Countries'  # Default fallback
-            
-        except (FileNotFoundError, IOError):
-            return 'All Countries'
-    
     def save_theme_pref(self, is_light_theme):
         config_dir = os.path.expanduser("~/.config/pactopac")
         os.makedirs(config_dir, exist_ok=True)
@@ -966,32 +790,6 @@ class PkgMan(Adw.ApplicationWindow):
         
         self.save_theme_pref(is_light)
 
-    def generate_mirrorlist(self, country_code):
-        def generate():
-            try:
-                url = f"https://archlinux.org/mirrorlist/?country={country_code}&protocol=https&ip_version=4"
-                
-                with urllib.request.urlopen(url) as response:
-                    mirrorlist_data = response.read().decode('utf-8')
-                
-                # Uncomment all servers
-                uncommented_data = re.sub(r'^#(Server = )', r'\1', mirrorlist_data, flags=re.MULTILINE)
-                
-                # Backup current mirrorlist
-                subprocess.run(['cp', '/etc/pacman.d/mirrorlist', '/etc/pacman.d/mirrorlist.backup'], check=True)
-                
-                # Write new mirrorlist
-                with open('/etc/pacman.d/mirrorlist', 'w') as f:
-                    f.write(uncommented_data)
-                
-                # Refresh pacman
-                GLib.idle_add(lambda: self.run_cmd(['pacman', '-Sy']))
-                
-            except Exception as e:
-                GLib.idle_add(lambda: self.show_error(f"Failed to generate mirrorlist: {e}"))
-        
-        threading.Thread(target=generate, daemon=True).start()
-    
     def show_error(self, message):
         dialog = Adw.AlertDialog(heading="Error", body=message)
         dialog.add_response("ok", "OK")
