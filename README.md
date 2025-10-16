@@ -10,7 +10,7 @@ Simple GUI for pacman/flatpak using Subprocess.
 
 ### Get it running:
 ```
-$ pacman -S python-gobject gtk4 libadwaita
+$ pacman -S python-gobject gtk4 libadwaita vte4
 $ sudo python3 main.py
 ``` 
 
@@ -25,7 +25,6 @@ Pacman Stuff
 - Mirrors
 
 Not Pacman Stuff
-- Detect Hardware (Work in progress)
 - Flatpak
 
 **Core features:**
