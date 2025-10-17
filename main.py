@@ -645,7 +645,7 @@ class PkgMan(Adw.ApplicationWindow):
                 
                 if orphaned_packages:
                     # Remove orphaned packages
-                    cmd = ['pacman', '-Rns'] + ['--noconfirm'] + orphaned_packages.split('\n')
+                    cmd = ['pacman', '-Rns'] + orphaned_packages.split('\n')
                     GLib.idle_add(lambda: self.run_cmd(cmd))
                 else:
                     # No orphans found, clean cache instead
@@ -676,7 +676,7 @@ class PkgMan(Adw.ApplicationWindow):
             self.run_cmd(['paccache', '-r'])
         elif response == "full":
             # pacman -Scc: removes all cached packages
-            self.run_cmd(['pacman', '-Scc', '--noconfirm'])
+            self.run_cmd(['pacman', '-Scc'])
 
     def check_fp(self):
         try:
@@ -740,11 +740,6 @@ class PkgMan(Adw.ApplicationWindow):
             # Start polling every 500ms for installation completion
             GLib.timeout_add(500, check_installation_complete)
         
-        # Use the existing run_cmd method to install flatpak
-        # and schedule the check after a brief delay
-        self.run_cmd(['pacman', '-S', '--noconfirm', 'flatpak'])
-        GLib.timeout_add(100, lambda: check_and_reopen() or False)
-
     def refresh_kde_menu(self):
         """Refresh KDE menu to show newly installed Flatpak applications"""
         try:
@@ -1352,14 +1347,14 @@ class PkgMan(Adw.ApplicationWindow):
         installed, pkg_type = self.selected[2], self.selected[3]
         
         if installed:
-            cmd = ['flatpak', 'uninstall', '-y', self.selected[4]] if pkg_type == "flatpak" else ['pacman', '-R', '--noconfirm', self.selected[0]]
+            cmd = ['flatpak', 'uninstall', '-y', self.selected[4]] if pkg_type == "flatpak" else ['pacman', '-R', self.selected[0]]
         else:
-            cmd = ['flatpak', 'install', '-y', 'flathub', self.selected[4]] if pkg_type == "flatpak" else ['pacman', '-S', '--noconfirm', self.selected[0]]
+            cmd = ['flatpak', 'install', '-y', 'flathub', self.selected[4]] if pkg_type == "flatpak" else ['pacman', '-S', self.selected[0]]
         
         self.run_cmd(cmd)
     
     def handle_update(self, button):
-        self.run_cmd(['pacman', '-Syu', '--noconfirm'])
+        self.run_cmd(['pacman', '-Syu'])
     
     def get_total_package_sizes(self):
         try:
