@@ -400,7 +400,7 @@ class PkgMan(Adw.ApplicationWindow):
 
         multilib_row = Adw.SwitchRow(
             title=repo_title,
-            subtitle="Enable 32-bit package support for games and legacy software"
+            subtitle="Enable 32-bit package support for games and legacy software\nHint: lib32-vulkan-intel or lib32-vulkan-radeon or lib32-nvidia-utils"
         )
         multilib_row.set_active(self.check_multilib_enabled())
         multilib_row.connect("notify::active", self.on_multilib_toggle)
