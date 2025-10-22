@@ -722,30 +722,9 @@ class PkgMan(Adw.ApplicationWindow):
             return 'multilib'
         
     def install_fp_and_refresh(self, dialog):
-        # Close the current settings dialog
+        """Install flatpak package"""
         dialog.close()
-        
-        def check_and_reopen():
-            """Poll for flatpak installation completion and reopen settings"""
-            def check_installation_complete():
-                if self.check_fp():
-                    # Flatpak is now installed, refresh KDE menu for Flatpak apps visibility
-                    self.refresh_kde_menu()
-                    # Reopen settings dialog
-                    self.show_settings(None)
-                    return False  # Stop the timeout
-                else:
-                    return True  # Continue checking
-            
-            # Start polling every 500ms for installation completion
-            GLib.timeout_add(500, check_installation_complete)
-        
-    def refresh_kde_menu(self):
-        """Refresh KDE menu to show newly installed Flatpak applications"""
-        try:
-            subprocess.Popen(['plasmashell', '--replace'])
-        except Exception as e:
-            print(f"KDE menu refresh failed: {e}")
+        self.run_cmd(['pacman', '-S', '--noconfirm', '--needed', 'flatpak'])
 
     def show_info(self, message):
         """Show info dialog"""
