@@ -633,6 +633,9 @@ class PkgMan(Adw.ApplicationWindow):
         if self.check_fp():
             # This removes unused runtimes and clears cache
             self.run_cmd(['flatpak', 'uninstall', '--unused', '-y'])
+            # flatpak uninstall --delete-data
+            # flatpak repair --user
+
         else:
             self.show_error("Flatpak is not installed")
 
@@ -919,21 +922,11 @@ class PkgMan(Adw.ApplicationWindow):
             # Run the installer script as the actual user (not root)
             actual_user = os.environ.get('SUDO_USER')
             if actual_user:
-                result = subprocess.run(['sudo', '-u', actual_user, 'bash', script_path], 
-                                      capture_output=True, text=True, check=False)
-                if result.returncode == 0:
-                    # Give the script a moment to create the files
-                    import time
-                    time.sleep(0.5)
-                    # Send an immediate test notification for instant feedback
-                    self.send_test_notification(actual_user)
+                subprocess.run(['sudo', '-u', actual_user, 'bash', script_path],
+                             capture_output=True, text=True, check=False)
             else:
-                result = subprocess.run(['bash', script_path], 
-                                      capture_output=True, text=True, check=False)
-                if result.returncode == 0:
-                    import time
-                    time.sleep(0.5)
-                    self.send_test_notification()
+                subprocess.run(['bash', script_path],
+                             capture_output=True, text=True, check=False)
         else:
             self.show_error("Update checker script not found")
     
@@ -976,53 +969,6 @@ class PkgMan(Adw.ApplicationWindow):
                     subprocess.run(['bash', script_path], check=False)
             else:
                 self.show_error("Update checker uninstall script not found")
-    
-    def send_test_notification(self, actual_user=None):
-        """Send an immediate test notification for instant feedback"""
-        try:
-            # First check if notify-send exists
-            if actual_user:
-                # Check if notify-send is available as the user
-                result = subprocess.run(['sudo', '-u', actual_user, 'which', 'notify-send'], 
-                                      capture_output=True, check=False)
-                if result.returncode == 0:
-                    # Get the user's actual display and session info
-                    try:
-                        # Get user's DISPLAY from their process
-                        display_result = subprocess.run(['sudo', '-u', actual_user, 'bash', '-c', 'echo $DISPLAY'], 
-                                                      capture_output=True, text=True, check=False)
-                        user_display = display_result.stdout.strip()
-                        
-                        # Use runuser instead of sudo for better session handling
-                        subprocess.run(['runuser', '-l', actual_user, '-c', 
-                                      f'DISPLAY={user_display or ":0"} notify-send "Update Checker Enabled" "Notifications are now active! Checking for updates..."'], 
-                                     check=False)
-                        print(f"Test notification sent to display: {user_display or ':0'}")
-                    except:
-                        # Fallback to original method
-                        env = os.environ.copy()
-                        env['DISPLAY'] = ':0'
-                        subprocess.run(['sudo', '-u', actual_user, 'notify-send', 
-                                      'Update Checker Enabled', 
-                                      'Notifications are now active! Checking for updates...'], 
-                                     env=env, check=False)
-                        print("Test notification sent (fallback method)")
-                else:
-                    print("notify-send not found - notifications may not work")
-            else:
-                result = subprocess.run(['which', 'notify-send'], capture_output=True, check=False)
-                if result.returncode == 0:
-                    subprocess.run(['notify-send', 
-                                  'Update Checker Enabled', 
-                                  'Notifications are now active! Checking for updates...'], 
-                                 check=False)
-                    print("Test notification sent")
-                else:
-                    print("notify-send not found - install libnotify for desktop notifications")
-        except Exception as e:
-            print(f"Test notification failed: {e}")
-            print("Update checker will still work, but may only show console messages")
-    
     
     def update_checker_interval(self, seconds):
         """Update the check interval if update checker is enabled"""
