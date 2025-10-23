@@ -1,0 +1,6 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export XAUTHORITY=$XAUTHORITY
+
+sudo -E python3 -B $SCRIPT_DIR/main.py
