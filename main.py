@@ -63,12 +63,15 @@ class PkgMan(Adw.ApplicationWindow):
         super().__init__(application=app)
         self.set_title("PacToPac")
         self.set_default_size(800, 600)
-        
+
         if os.geteuid() != 0:
             print("Error: Run with sudo", file=sys.stderr)
             app.quit()
             return
-            
+
+        # Get SUDO_USER once at initialization
+        self.sudo_user = os.environ.get('SUDO_USER')
+
         self.packages = []
         self.filtered_packages = []
         self.selected = None
@@ -345,7 +348,8 @@ class PkgMan(Adw.ApplicationWindow):
     def show_settings(self, button):
         dialog = Adw.PreferencesDialog()
         dialog.set_title("Settings")
-        
+        dialog.set_default_size(800, 600)
+
         # Repository Settings Page
         repo_page = Adw.PreferencesPage(title="General", icon_name="folder-symbolic")
         dialog.add(repo_page)
@@ -525,7 +529,10 @@ class PkgMan(Adw.ApplicationWindow):
         """Update all Flatpak applications"""
         if self.check_fp():
             ## Needs to be ran in user session
-            self.run_cmd(['sudo','$USER''flatpak', 'update', '-y'])
+            if self.sudo_user:
+                self.run_cmd(['sudo', '-u', self.sudo_user, 'flatpak', 'update', '-y'])
+            else:
+                self.show_error("SUDO_USER not found")
         else:
             self.show_error("Flatpak is not installed")
 
@@ -533,7 +540,10 @@ class PkgMan(Adw.ApplicationWindow):
         """Clean Flatpak cache and unused runtimes"""
         if self.check_fp():
             # This removes unused runtimes and clears cache
-            self.run_cmd(['flatpak', 'uninstall', '--unused', '-y'])
+            if self.sudo_user:
+                self.run_cmd(['sudo', '-u', self.sudo_user, 'flatpak', 'uninstall', '--unused', '-y'])
+            else:
+                self.show_error("SUDO_USER not found")
             # flatpak uninstall --delete-data
             # flatpak repair --user
         else:
@@ -583,7 +593,10 @@ class PkgMan(Adw.ApplicationWindow):
 
     def check_fp(self):
         try:
-            cmd = (['flatpak', '--version'])
+            if self.sudo_user:
+                cmd = (['sudo', '-u', self.sudo_user, 'flatpak', '--version'])
+            else:
+                cmd = (['flatpak', '--version'])
             subprocess.run(cmd, capture_output=True, check=True)
             return True
         except:
@@ -591,7 +604,10 @@ class PkgMan(Adw.ApplicationWindow):
     
     def check_fh(self):
         try:
-            result = subprocess.run(['flatpak', 'remotes'], capture_output=True, text=True, check=True)
+            if self.sudo_user:
+                result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remotes'], capture_output=True, text=True, check=True)
+            else:
+                result = subprocess.run(['flatpak', 'remotes'], capture_output=True, text=True, check=True)
             # Check if flathub exists and is not disabled
             for line in result.stdout.split('\n'):
                 if 'flathub' in line.lower():
@@ -696,14 +712,17 @@ class PkgMan(Adw.ApplicationWindow):
     
     def on_fh_toggle(self, switch_row, param):
         enabled = switch_row.get_active()
-        if enabled:
-            # Always try to add first (handles both missing and disabled cases)
-            self.run_toggle(True, ['flatpak', 'remote-add', '--if-not-exists', 'flathub', 'https://dl.flathub.org/repo/flathub.flatpakrepo'], None)
-            # Then make sure it's enabled
-            subprocess.run(['flatpak', 'remote-modify', '--enable', 'flathub'], check=False)
+        if self.sudo_user:
+            if enabled:
+                # Always try to add first (handles both missing and disabled cases)
+                self.run_toggle(True, ['sudo', '-u', self.sudo_user, 'flatpak', 'remote-add', '--if-not-exists', 'flathub', 'https://dl.flathub.org/repo/flathub.flatpakrepo'], None)
+                # Then make sure it's enabled
+                subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-modify', '--enable', 'flathub'], check=False)
+            else:
+                self.run_toggle(False, None, ['sudo', '-u', self.sudo_user, 'flatpak', 'remote-modify', '--disable', 'flathub'])
         else:
-            self.run_toggle(False, None, ['flatpak', 'remote-modify', '--disable', 'flathub'])
-        
+            self.show_error("SUDO_USER not found")
+
         GLib.idle_add(self.load_packages)
 
     def check_pacman_styling_enabled(self):
@@ -779,11 +798,15 @@ class PkgMan(Adw.ApplicationWindow):
                 # Load flatpak packages
                 if self.check_fp() and self.check_fh():
                     try:
-                        available = subprocess.run(['flatpak', 'remote-ls', '--app', 'flathub'], capture_output=True, text=True, check=True)
-                        installed_fps = subprocess.run(['flatpak', 'list', '--app'], capture_output=True, text=True, check=True)
-                        
+                        if self.sudo_user:
+                            available = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-ls', '--app', 'flathub'], capture_output=True, text=True, check=True)
+                            installed_fps = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'list', '--app'], capture_output=True, text=True, check=True)
+                        else:
+                            available = subprocess.run(['flatpak', 'remote-ls', '--app', 'flathub'], capture_output=True, text=True, check=True)
+                            installed_fps = subprocess.run(['flatpak', 'list', '--app'], capture_output=True, text=True, check=True)
+
                         installed_ids = {line.split('\t')[1] for line in installed_fps.stdout.split('\n') if line.strip() and len(line.split('\t')) > 1}
-                        
+
                         for line in available.stdout.split('\n'):
                             if line.strip():
                                 parts = line.split('\t')
@@ -1173,14 +1196,24 @@ class PkgMan(Adw.ApplicationWindow):
     def handle_package_action(self, button):
         if not self.selected:
             return
-        
+
         installed, pkg_type = self.selected[2], self.selected[3]
-        
-        if installed:
-            cmd = ['flatpak', 'uninstall', '-y', self.selected[4]] if pkg_type == "flatpak" else ['pacman', '-R', self.selected[0]]
+
+        if pkg_type == "flatpak":
+            if self.sudo_user:
+                if installed:
+                    cmd = ['sudo', '-u', self.sudo_user, 'flatpak', 'uninstall', '-y', self.selected[4]]
+                else:
+                    cmd = ['sudo', '-u', self.sudo_user, 'flatpak', 'install', '-y', 'flathub', self.selected[4]]
+            else:
+                self.show_error("SUDO_USER not found")
+                return
         else:
-            cmd = ['flatpak', 'install', '-y', 'flathub', self.selected[4]] if pkg_type == "flatpak" else ['pacman', '-S', self.selected[0]]
-        
+            if installed:
+                cmd = ['pacman', '-R', self.selected[0]]
+            else:
+                cmd = ['pacman', '-S', self.selected[0]]
+
         self.run_cmd(cmd)
     
     def handle_update(self, button):
@@ -1244,13 +1277,21 @@ class PkgMan(Adw.ApplicationWindow):
                     if len(self.selected) > 4:
                         app_id = self.selected[4]  # Should be the full com.app.Name ID
                         installed = self.selected[2]  # Whether it's installed
-                        
-                        if installed:
-                            # For installed apps, use 'flatpak info'
-                            result = subprocess.run(['flatpak', 'info', app_id], capture_output=True, text=True, check=True)
+
+                        if self.sudo_user:
+                            if installed:
+                                # For installed apps, use 'flatpak info'
+                                result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'info', app_id], capture_output=True, text=True, check=True)
+                            else:
+                                # For uninstalled apps, use 'flatpak remote-info' with the remote name
+                                result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-info', 'flathub', app_id], capture_output=True, text=True, check=True)
                         else:
-                            # For uninstalled apps, use 'flatpak remote-info' with the remote name
-                            result = subprocess.run(['flatpak', 'remote-info', 'flathub', app_id], capture_output=True, text=True, check=True)
+                            if installed:
+                                # For installed apps, use 'flatpak info'
+                                result = subprocess.run(['flatpak', 'info', app_id], capture_output=True, text=True, check=True)
+                            else:
+                                # For uninstalled apps, use 'flatpak remote-info' with the remote name
+                                result = subprocess.run(['flatpak', 'remote-info', 'flathub', app_id], capture_output=True, text=True, check=True)
                     else:
                         print("Error - flatpak package missing app ID")
                         GLib.idle_add(self.display_info, toolbar_view, f"Error: Flatpak package data incomplete")
@@ -1259,7 +1300,7 @@ class PkgMan(Adw.ApplicationWindow):
                     result = subprocess.run(['pacman', '-Si', pkg_name], capture_output=True, text=True, check=True)
                     if not result.stdout.strip():
                         result = subprocess.run(['pacman', '-Qi', pkg_name], capture_output=True, text=True, check=True)
-                
+
                 GLib.idle_add(self.display_info, toolbar_view, result.stdout)
             except subprocess.CalledProcessError as e:
                 error_msg = f"Failed to get info for {pkg_name}"
