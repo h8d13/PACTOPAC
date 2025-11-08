@@ -346,7 +346,7 @@ class PkgMan(Adw.ApplicationWindow):
             self.refresh_list()    
     
     def show_settings(self, button):
-        dialog = Adw.PreferencesDialog()
+        dialog = Adw.PreferencesWindow(transient_for=self, modal=True)
         dialog.set_title("Settings")
         dialog.set_default_size(800, 600)
 
@@ -514,7 +514,7 @@ class PkgMan(Adw.ApplicationWindow):
 
         resources_group.add(arch_news_row)
 
-        dialog.present(self)
+        dialog.present()
 
     def copy_arch_news_url(self, button):
         """Copy Arch Linux news URL to clipboard"""
