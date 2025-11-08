@@ -3,14 +3,13 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Vte', '3.91')
-from gi.repository import Gtk, Adw, GLib, Vte
+from gi.repository import Gtk, Adw, GLib, Vte, Gdk
 import subprocess
 import threading
 import os
 import sys
 import re
 import signal
-import atexit
 
 # Import lazy package functions
 try:
@@ -78,61 +77,14 @@ class PkgMan(Adw.ApplicationWindow):
         self.current_tab = "installed"  # Default to installed tab
         self.running_processes = []  # Track running pacman/flatpak processes
         self._cleanup_done = False  # Flag to prevent duplicate cleanup
-        self.setup_cleanup_handlers()
         self.setup_ui()
         self.load_packages()
-        self.start_process_monitor()
-    
-    def setup_cleanup_handlers(self):
-        """Setup signal handlers and cleanup mechanisms"""
-        # Register cleanup on normal exit
-        atexit.register(self.cleanup_processes)
-        
-        # Handle SIGINT (Ctrl+C) and SIGTERM gracefully
-        signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTERM, self.signal_handler)
-        
-        # Connect to window close event
-        self.connect("close-request", self.on_window_close)
     
     def signal_handler(self, signum, frame):
         """Handle termination signals gracefully"""
         print(f"\nReceived signal {signum}, cleaning up...")
-        self.cleanup_processes()
         sys.exit(0)
-    
-    def on_window_close(self, window):
-        """Handle window close event"""
-        # Check if there are running processes
-        active_processes = [proc for proc in self.running_processes if proc.poll() is None]
         
-        if active_processes:
-            # Show confirmation dialog
-            dialog = Adw.AlertDialog(
-                heading="Running Operations",
-                body=f"There are {len(active_processes)} package operations still running. Closing now may leave the system in an inconsistent state.\n\nDo you want to:"
-            )
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("wait", "Wait for Completion")
-            dialog.add_response("force", "Force Close")
-            dialog.set_response_appearance("force", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_response_appearance("wait", Adw.ResponseAppearance.SUGGESTED)
-            
-            def on_response(d, response):
-                if response == "force":
-                    self.cleanup_processes()
-                    window.destroy()
-                elif response == "wait":
-                    # Start monitoring processes and close when done
-                    self.monitor_processes_and_close(window)
-            
-            dialog.connect("response", on_response)
-            dialog.present(self)
-            return True  # Prevent close for now
-        else:
-            self.cleanup_processes()
-            return False  # Allow normal close
-    
     def monitor_processes_and_close(self, window):
         """Monitor processes and close window when all complete"""
         def check_processes():
@@ -143,54 +95,11 @@ class PkgMan(Adw.ApplicationWindow):
                 return False  # Stop monitoring
             return True  # Continue monitoring
         
-        # Check every ,5second
-        GLib.timeout_add(500, check_processes)
-    
-    def cleanup_processes(self):
-        """Cleanup all running processes and remove lock files if necessary"""
-        if not hasattr(self, '_cleanup_done') or not self._cleanup_done:
-            self._cleanup_done = True
-
-            if self.running_processes:
-                print("Cleaning up running processes...")
-
-            for proc in self.running_processes[:]:  # Copy list to avoid modification during iteration
-                try:
-                    if proc.poll() is None:  # Process is still running
-                        print(f"Terminating process PID {proc.pid}")
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=5)  # Wait up to 5 seconds for graceful termination
-                        except subprocess.TimeoutExpired:
-                            print(f"Force killing process PID {proc.pid}")
-                            proc.kill()
-                            proc.wait()
-                    self.running_processes.remove(proc)
-                except Exception as e:
-                    print(f"Error cleaning up process: {e}")
-        
-    def start_process_monitor(self):
-        """Start monitoring running processes for UI updates"""
-        def update_process_indicator():
-            # Only check if we have processes
-            if not self.running_processes:
-                self.process_indicator.set_text("")
-                return True
-
-            active_processes = [proc for proc in self.running_processes if proc.poll() is None]
-            count = len(active_processes)
-
-            if count > 0:
-                self.process_indicator.set_text(f"🔄 {count} running")
-                self.process_indicator.add_css_class("accent")
-            else:
-                self.process_indicator.set_text("")
-                self.process_indicator.remove_css_class("accent")
-
-            return True  # Continue monitoring
-
-        # Update every 0,5 second
-        GLib.timeout_add(500, update_process_indicator)
+        # Check every 1 second
+        GLib.timeout_add(1000, check_processes)
+ 
+        # Update every 1 second
+        GLib.timeout_add(1000, update_process_indicator)
     
     def setup_ui(self):
         toolbar_view = Adw.ToolbarView()
@@ -211,14 +120,19 @@ class PkgMan(Adw.ApplicationWindow):
         
         self.search = Gtk.SearchEntry(placeholder_text="Search packages...")
         self.search.connect("search-changed", self.on_search_changed)
+
+        # Add escape key handler to refocus list
+        search_key_controller = Gtk.EventControllerKey()
+        search_key_controller.connect("key-pressed", self.on_search_key_pressed)
+        self.search.add_controller(search_key_controller)
+
         box.append(self.search)
         
         # Add view stack for Installed/Available tabs
         self.view_stack = Adw.ViewStack()
         self.view_switcher = Adw.ViewSwitcher()
         self.view_switcher.set_stack(self.view_stack)
-        box.append(self.view_switcher)
-        
+
         # Create Installed tab
         installed_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.installed_scroll = Gtk.ScrolledWindow(vexpand=True)
@@ -229,6 +143,17 @@ class PkgMan(Adw.ApplicationWindow):
         self.installed_list = Gtk.ListBox()
         self.installed_list.add_css_class("boxed-list")
         self.installed_list.connect("row-selected", self.on_select)
+
+        # Enable keyboard navigation
+        self.installed_list.set_can_focus(True)
+        self.installed_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+
+        # Add keyboard event controller for arrow keys
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_controller.connect("key-pressed", self.on_list_key_pressed, self.installed_list)
+        self.installed_list.add_controller(key_controller)
+
         installed_container.append(self.installed_list)
         
         # Load More button with consistent styling
@@ -255,6 +180,17 @@ class PkgMan(Adw.ApplicationWindow):
         self.flatpak_list = Gtk.ListBox()
         self.flatpak_list.add_css_class("boxed-list")
         self.flatpak_list.connect("row-selected", self.on_select)
+
+        # Enable keyboard navigation
+        self.flatpak_list.set_can_focus(True)
+        self.flatpak_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+
+        # Add keyboard event controller for arrow keys
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_controller.connect("key-pressed", self.on_list_key_pressed, self.flatpak_list)
+        self.flatpak_list.add_controller(key_controller)
+
         flatpak_container.append(self.flatpak_list)
         
         # Load More button with consistent styling
@@ -281,6 +217,17 @@ class PkgMan(Adw.ApplicationWindow):
         self.available_list = Gtk.ListBox()
         self.available_list.add_css_class("boxed-list")
         self.available_list.connect("row-selected", self.on_select)
+
+        # Enable keyboard navigation
+        self.available_list.set_can_focus(True)
+        self.available_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+
+        # Add keyboard event controller for arrow keys
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_controller.connect("key-pressed", self.on_list_key_pressed, self.available_list)
+        self.available_list.add_controller(key_controller)
+
         available_container.append(self.available_list)
         
         # Load More button with consistent styling
@@ -307,6 +254,17 @@ class PkgMan(Adw.ApplicationWindow):
         self.all_list = Gtk.ListBox()
         self.all_list.add_css_class("boxed-list")
         self.all_list.connect("row-selected", self.on_select)
+
+        # Enable keyboard navigation
+        self.all_list.set_can_focus(True)
+        self.all_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+
+        # Add keyboard event controller for arrow keys
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_controller.connect("key-pressed", self.on_list_key_pressed, self.all_list)
+        self.all_list.add_controller(key_controller)
+
         all_container.append(self.all_list)
         
         # Load More button with consistent styling
@@ -330,7 +288,10 @@ class PkgMan(Adw.ApplicationWindow):
         self.view_stack.connect("notify::visible-child-name", self.on_stack_changed)
         
         box.append(self.view_stack)
-        
+
+        # Add view switcher below the list
+        box.append(self.view_switcher)
+
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, homogeneous=True)
         
         self.info_btn = Gtk.Button(label="Info", sensitive=False)
@@ -534,67 +495,6 @@ class PkgMan(Adw.ApplicationWindow):
         style_row.connect("notify::active", self.on_style_toggle)
         appearance_group.add(style_row)
 
-        # Update Notifications Group
-        updates_group = Adw.PreferencesGroup(
-            title="Update Notifications", 
-            description="Automatic notifications when system updates are available"
-        )
-        about_page.add(updates_group)
-        
-        # Update checker toggle
-        update_checker_row = Adw.SwitchRow(
-            title="Enable Update Checker",
-            subtitle="Show desktop notifications when updates are available (works on next login/logout)"
-        )
-        # Set initial state without triggering the handler
-        is_enabled = self.check_update_checker_enabled()
-        # Connect handler BEFORE setting state to avoid false triggers
-        update_checker_row.connect("notify::active", self.on_update_checker_toggle)
-        # Block the signal temporarily while setting initial state
-        update_checker_row.handler_block_by_func(self.on_update_checker_toggle)
-        update_checker_row.set_active(is_enabled)
-        update_checker_row.handler_unblock_by_func(self.on_update_checker_toggle)
-        updates_group.add(update_checker_row)
-        
-        # Time interval selection
-        interval_row = Adw.ComboRow(
-            title="Check Interval",
-            subtitle="How often to check for updates"
-        )
-        
-        interval_model = Gtk.StringList()
-        intervals = [
-            ("1 minute", "60"),
-            ("5 minutes", "300"),
-            ("15 minutes", "900"),
-            ("30 minutes", "1800"),
-            ("1 hour", "3600"), 
-            ("2 hours", "7200"),
-            ("6 hours", "21600"),
-            ("12 hours", "43200"),
-            ("24 hours", "86400")
-        ]
-        
-        for name, _ in intervals:
-            interval_model.append(name)
-        interval_row.set_model(interval_model)
-        
-        # Set current selection based on current interval
-        current_interval = self.get_current_update_interval()
-        for i, (_, seconds) in enumerate(intervals):
-            if seconds == current_interval:
-                interval_row.set_selected(i)
-                break
-        
-        # Only enable interval selection if update checker is enabled
-        interval_row.set_sensitive(is_enabled)
-        
-        interval_row.connect("notify::selected", lambda row, _: self.on_interval_changed(row, intervals))
-        updates_group.add(interval_row)
-        
-        # Store reference to interval row for enabling/disabling
-        update_checker_row.interval_row = interval_row
-
         resources_group = Adw.PreferencesGroup(title="Resources")
         about_page.add(resources_group)
 
@@ -624,7 +524,8 @@ class PkgMan(Adw.ApplicationWindow):
     def handle_flatpak_update(self, button):
         """Update all Flatpak applications"""
         if self.check_fp():
-            self.run_cmd(['flatpak', 'update', '-y'])
+            ## Needs to be ran in user session
+            self.run_cmd(['sudo','$USER''flatpak', 'update', '-y'])
         else:
             self.show_error("Flatpak is not installed")
 
@@ -635,7 +536,6 @@ class PkgMan(Adw.ApplicationWindow):
             self.run_cmd(['flatpak', 'uninstall', '--unused', '-y'])
             # flatpak uninstall --delete-data
             # flatpak repair --user
-
         else:
             self.show_error("Flatpak is not installed")
 
@@ -861,176 +761,6 @@ class PkgMan(Adw.ApplicationWindow):
         except Exception as e:
             self.show_error(f"Failed to disable pacman styling: {e}")
     
-    def check_update_checker_enabled(self):
-        """Check if update checker is currently enabled"""
-        # Get the actual user (not root)
-        actual_user = os.environ.get('SUDO_USER')
-        if actual_user:
-            autostart_file = f"/home/{actual_user}/.config/autostart/update-checker.desktop"
-        else:
-            autostart_file = os.path.expanduser("~/.config/autostart/update-checker.desktop")
-        return os.path.exists(autostart_file)
-    
-    def get_current_update_interval(self):
-        """Get current update check interval from script"""
-        # Get the actual user (not root)
-        actual_user = os.environ.get('SUDO_USER')
-        if actual_user:
-            script_file = f"/home/{actual_user}/.local/bin/update-checker"
-        else:
-            script_file = os.path.expanduser("~/.local/bin/update-checker")
-            
-        if not os.path.exists(script_file):
-            return "7200"  # Default 2 hours
-        
-        try:
-            with open(script_file, 'r') as f:
-                content = f.read()
-                # Look for sleep command with interval
-                import re
-                match = re.search(r'sleep (\d+)', content)
-                if match:
-                    return match.group(1)
-        except:
-            pass
-        return "7200"
-    
-    def on_update_checker_toggle(self, switch_row, param):
-        """Handle update checker enable/disable"""
-        enabled = switch_row.get_active()
-        
-        # Enable/disable the interval dropdown
-        if hasattr(switch_row, 'interval_row'):
-            switch_row.interval_row.set_sensitive(enabled)
-        
-        if enabled:
-            self.enable_update_checker()
-        else:
-            self.disable_update_checker()
-    
-    def on_interval_changed(self, combo_row, intervals):
-        """Handle update interval change"""
-        selected = combo_row.get_selected()
-        if selected < len(intervals):
-            _, seconds = intervals[selected]
-            self.update_checker_interval(seconds)
-    
-    def enable_update_checker(self):
-        """Enable the update checker with current interval"""
-        script_path = os.path.join(os.path.dirname(__file__), 'lib/update-checker.sh')
-        if os.path.exists(script_path):
-            # Run the installer script as the actual user (not root)
-            actual_user = os.environ.get('SUDO_USER')
-            if actual_user:
-                subprocess.run(['sudo', '-u', actual_user, 'bash', script_path],
-                             capture_output=True, text=True, check=False)
-            else:
-                subprocess.run(['bash', script_path],
-                             capture_output=True, text=True, check=False)
-        else:
-            self.show_error("Update checker script not found")
-    
-    def disable_update_checker(self):
-        """Disable the update checker"""
-        actual_user = os.environ.get('SUDO_USER')
-        
-        try:
-            # 1. Stop the update checker processes properly as the user
-            if actual_user:
-                subprocess.run(['sudo', '-u', actual_user, 'pkill', '-f', 'update-checker'], 
-                             capture_output=True, check=False)
-            else:
-                subprocess.run(['pkill', '-f', 'update-checker'], capture_output=True, check=False)
-            
-            # 2. Remove the files manually instead of using the script
-            if actual_user:
-                script_file = f"/home/{actual_user}/.local/bin/update-checker"
-                desktop_file = f"/home/{actual_user}/.config/autostart/update-checker.desktop"
-            else:
-                script_file = os.path.expanduser("~/.local/bin/update-checker")
-                desktop_file = os.path.expanduser("~/.config/autostart/update-checker.desktop")
-            
-            # Remove files if they exist
-            for file_path in [script_file, desktop_file]:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    print(f"Removed: {file_path}")
-            
-            print("Update checker disabled successfully")
-            
-        except Exception as e:
-            print(f"Error disabling update checker: {e}")
-            # Fallback to the original script method
-            script_path = os.path.join(os.path.dirname(__file__), 'lib/update-checker-uninstall.sh')
-            if os.path.exists(script_path):
-                if actual_user:
-                    subprocess.run(['sudo', '-u', actual_user, 'bash', script_path], check=False)
-                else:
-                    subprocess.run(['bash', script_path], check=False)
-            else:
-                self.show_error("Update checker uninstall script not found")
-    
-    def update_checker_interval(self, seconds):
-        """Update the check interval if update checker is enabled"""
-        if self.check_update_checker_enabled():
-            # Just restart the process with new interval - no need for full reinstall
-            self.restart_update_checker_with_interval(seconds)
-    
-    def restart_update_checker_with_interval(self, seconds):
-        """Restart update checker with new interval without full reinstall"""
-        actual_user = os.environ.get('SUDO_USER')
-        
-        try:
-            # 1. Stop the current update checker process
-            if actual_user:
-                subprocess.run(['sudo', '-u', actual_user, 'pkill', '-f', 'update-checker'], 
-                             capture_output=True, check=False)
-            else:
-                subprocess.run(['pkill', '-f', 'update-checker'], capture_output=True, check=False)
-            
-            # 2. Update the interval in the source script for future installs
-            self.modify_update_script_interval(seconds)
-            
-            # 3. Update the installed script with new interval
-            if actual_user:
-                script_path = f"/home/{actual_user}/.local/bin/update-checker"
-            else:
-                script_path = os.path.expanduser("~/.local/bin/update-checker")
-                
-            if os.path.exists(script_path):
-                with open(script_path, 'r') as f:
-                    content = f.read()
-                
-                import re
-                content = re.sub(r'sleep \d+', f'sleep {seconds}', content)
-                
-                with open(script_path, 'w') as f:
-                    f.write(content)
-            
-            # Update complete - checker will use new interval on next run
-            
-        except Exception as e:
-            print(f"Failed to update interval: {e}")
-    
-    def modify_update_script_interval(self, seconds):
-        """Modify the update checker script with new interval"""
-        script_path = os.path.join(os.path.dirname(__file__), 'lib/update-checker.sh')
-        if not os.path.exists(script_path):
-            return
-            
-        try:
-            with open(script_path, 'r') as f:
-                content = f.read()
-            
-            # Replace the CHECK_INTERVAL line
-            import re
-            content = re.sub(r'CHECK_INTERVAL=\d+', f'CHECK_INTERVAL={seconds}', content)
-            
-            with open(script_path, 'w') as f:
-                f.write(content)
-        except Exception as e:
-            self.show_error(f"Failed to update interval: {e}")
-
     def load_packages(self):
         def load():
             try:
@@ -1081,6 +811,38 @@ class PkgMan(Adw.ApplicationWindow):
         if search_text.strip():
             self.view_stack.set_visible_child_name("all")
         self.refresh_list()
+
+    def on_search_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in search entry"""
+        
+        # Down arrow: focus the current list
+        if keyval == Gdk.KEY_Down:
+            current_list = self.get_current_list()
+            if current_list:
+                selected_row = current_list.get_selected_row()
+                if not selected_row:
+                    # Select first row if nothing selected
+                    first_row = current_list.get_row_at_index(0)
+                    if first_row:
+                        current_list.select_row(first_row)
+                        selected_row = first_row
+
+                if selected_row:
+                    current_list.grab_focus()
+                    return True
+
+        return False
+
+    def get_current_list(self):
+        """Get the ListBox for the current tab"""
+        if self.current_tab == "installed":
+            return self.installed_list
+        elif self.current_tab == "available":
+            return self.available_list
+        elif self.current_tab == "flatpak":
+            return self.flatpak_list
+        else:  # all tab
+            return self.all_list
     
     def refresh_list(self):
         # Determine which list and button to use based on current tab
@@ -1136,7 +898,7 @@ class PkgMan(Adw.ApplicationWindow):
         has_more = end_idx < total_filtered
         load_more_btn.set_sensitive(has_more)
         load_more_btn.set_label("More..." if has_more else "All packages loaded")
-    
+
         total_showing = min((self.current_page + 1) * self.page_size, total_filtered)
         if search_text:
             self.status.set_text(f"Showing {total_showing} of {total_filtered} filtered packages")
@@ -1144,7 +906,7 @@ class PkgMan(Adw.ApplicationWindow):
             total_installed_pacman = sum(1 for pkg in self.packages if pkg[2] and len(pkg) > 3 and pkg[3] == "pacman")
             total_installed_flatpak = sum(1 for pkg in self.packages if pkg[2] and len(pkg) > 3 and pkg[3] == "flatpak")
             total_installed = total_installed_pacman + total_installed_flatpak
-            
+
             if self.current_tab == "installed":
                 # Get total size for pacman packages only
                 total_size = self.get_total_package_sizes()
@@ -1156,11 +918,17 @@ class PkgMan(Adw.ApplicationWindow):
                 self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_available} available packages")
             else:  # all tab
                 self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed, {len(self.packages) - total_installed} available")
+
+        # Auto-select first package (but don't auto-focus to allow mouse scrolling)
+        if self.current_page == 0 and total_filtered > 0:
+            first_row = current_list.get_row_at_index(0)
+            if first_row:
+                current_list.select_row(first_row)
     
     def add_package_row(self, pkg_data, target_list):
         """Add a package row to the specified list"""
         name, repo, installed, pkg_type = pkg_data[:4]
-        
+
         row = Gtk.ListBoxRow()
         box = Gtk.Box(spacing=12)
         box.set_margin_top(6)
@@ -1248,23 +1016,160 @@ class PkgMan(Adw.ApplicationWindow):
         if row:
             self.selected = row.pkg_data
             installed = self.selected[2]
-            
+
             self.info_btn.set_sensitive(True)
             self.action_btn.set_sensitive(True)
-            
+
             if installed:
                 self.action_btn.set_label("Remove")
                 self.action_btn.remove_css_class("suggested-action")
                 self.action_btn.add_css_class("destructive-action")
             else:
                 self.action_btn.set_label("Install")
-                self.action_btn.remove_css_class("destructive-action") 
+                self.action_btn.remove_css_class("destructive-action")
                 self.action_btn.add_css_class("suggested-action")
         else:
             self.selected = None
             self.info_btn.set_sensitive(False)
             self.action_btn.set_sensitive(False)
-    
+
+    def on_list_key_pressed(self, controller, keyval, keycode, state, listbox):
+        """Handle arrow key navigation in package lists"""
+        from gi.repository import Gdk
+
+        # Tab/Shift+Tab: allow normal focus traversal between sections
+        if keyval == Gdk.KEY_Tab or keyval == Gdk.KEY_ISO_Left_Tab:
+            return False
+
+        # Enter: install/remove selected package
+        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            if self.selected and self.action_btn.get_sensitive():
+                self.handle_package_action(self.action_btn)
+                return True
+
+        # Backspace or Space: return to search
+        if keyval == Gdk.KEY_BackSpace or keyval == Gdk.KEY_space:
+            self.search.grab_focus()
+            # Let the search handle the key
+            return False
+
+        # Any regular typing key (letters, numbers, etc): return to search
+        if keyval >= 32 and keyval <= 126:  # Printable ASCII characters
+            self.search.grab_focus()
+            # Let the search handle the key
+            return False
+
+        selected_row = listbox.get_selected_row()
+        if not selected_row:
+            # If nothing selected, select first row
+            first_row = listbox.get_row_at_index(0)
+            if first_row:
+                listbox.select_row(first_row)
+                self.scroll_to_row(listbox, first_row)
+            return False
+
+        current_index = selected_row.get_index()
+
+        if keyval == Gdk.KEY_Down:
+            # Move down
+            next_row = listbox.get_row_at_index(current_index + 1)
+            if next_row:
+                listbox.select_row(next_row)
+                # Scroll to make it visible
+                self.scroll_to_row(listbox, next_row)
+                return True
+        elif keyval == Gdk.KEY_Up:
+            # Move up
+            if current_index > 0:
+                prev_row = listbox.get_row_at_index(current_index - 1)
+                if prev_row:
+                    listbox.select_row(prev_row)
+                    # Scroll to make it visible
+                    self.scroll_to_row(listbox, prev_row)
+                    return True
+
+        return False
+
+    def on_terminal_escape_pressed(self, controller, keyval, keycode, state, dialog):
+        """Handle escape key press in terminal dialog"""
+        if keyval == Gdk.KEY_Escape:
+            # Show confirmation dialog
+            confirm_dialog = Adw.AlertDialog(
+                heading="Exit Terminal?",
+                body="Are you sure you want to close this terminal? The running process will be terminated."
+            )
+            confirm_dialog.add_response("cancel", "Cancel")
+            confirm_dialog.add_response("exit", "Exit")
+            confirm_dialog.set_response_appearance("exit", Adw.ResponseAppearance.DESTRUCTIVE)
+            confirm_dialog.set_default_response("cancel")
+
+            def on_confirm_response(d, response):
+                if response == "exit":
+                    # Send 'n' to answer any pending prompt, then close
+                    if hasattr(dialog, 'terminal') and dialog.terminal:
+                        try:
+                            dialog.terminal.feed_child('n\n'.encode('utf-8'))
+                        except:
+                            pass
+                    # Set flag to allow close without re-showing confirmation
+                    dialog.confirmed_close = True
+                    dialog.close()
+
+            confirm_dialog.connect("response", on_confirm_response)
+            confirm_dialog.present(dialog)
+            return True
+        return False
+
+    def scroll_to_row(self, listbox, row):
+        """Scroll the list to make the row visible"""
+        if not row:
+            return
+
+        # Get the parent ScrolledWindow - need to traverse up through containers
+        parent = listbox.get_parent()
+        scroll_window = None
+
+        # Traverse up to find ScrolledWindow (it's wrapped in Box containers)
+        while parent:
+            if isinstance(parent, Gtk.ScrolledWindow):
+                scroll_window = parent
+                break
+            parent = parent.get_parent()
+
+        if not scroll_window:
+            return
+
+        # Use GTK4's proper method - compute bounds relative to listbox
+        success, bounds = row.compute_bounds(listbox)
+        if not success:
+            return
+
+        # Get the vertical adjustment
+        vadj = scroll_window.get_vadjustment()
+        if not vadj:
+            return
+
+        # Get bounds values
+        row_y = bounds.get_y()
+        row_height = bounds.get_height()
+
+        # Get visible area
+        page_size = vadj.get_page_size()
+        current_value = vadj.get_value()
+
+        # Add some padding for better UX (20px margin)
+        padding = 20
+
+        # Calculate if row is outside visible area
+        if row_y < current_value + padding:
+            # Row is above visible area, scroll up
+            new_value = max(0, row_y - padding)
+            vadj.set_value(new_value)
+        elif row_y + row_height > current_value + page_size - padding:
+            # Row is below visible area, scroll down
+            new_value = min(vadj.get_upper() - page_size, row_y + row_height - page_size + padding)
+            vadj.set_value(new_value)
+
     def handle_package_action(self, button):
         if not self.selected:
             return
@@ -1373,8 +1278,45 @@ class PkgMan(Adw.ApplicationWindow):
         scroll.set_margin_bottom(12)
         scroll.set_margin_start(12)
         scroll.set_margin_end(12)
-        
+
+        # Enable keyboard navigation
+        scroll.set_can_focus(True)
+        scroll.set_focus_on_click(True)
+
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        # Add freeze button for installed pacman packages
+        if self.selected and self.selected[2] and self.selected[3] == "pacman" and LAZY_AVAILABLE:
+            pkg_name = self.selected[0]
+            is_frozen = is_in_ignorepkg(pkg_name)
+
+            freeze_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            freeze_box.set_margin_bottom(12)
+
+            freeze_label = Gtk.Label(label="Package Update Status:", halign=Gtk.Align.START)
+            freeze_label.set_markup("<b>Package Update Status:</b>")
+            freeze_box.append(freeze_label)
+
+            freeze_btn = Gtk.Button(label="Unfreeze" if is_frozen else "Freeze")
+            freeze_btn.set_tooltip_text("Remove from IgnorePkg" if is_frozen else "Add to IgnorePkg to prevent updates")
+            if not is_frozen:
+                freeze_btn.add_css_class("suggested-action")
+            else:
+                freeze_btn.add_css_class("destructive-action")
+            freeze_btn.connect("clicked", lambda b: self.toggle_package_freeze(b, pkg_name))
+            freeze_box.append(freeze_btn)
+
+            status_label = Gtk.Label(label="[Frozen]" if is_frozen else "[Updates enabled]", halign=Gtk.Align.START, hexpand=True)
+            status_label.add_css_class("dim-label")
+            freeze_box.append(status_label)
+
+            content_box.append(freeze_box)
+
+            # Add separator
+            separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+            separator.set_margin_top(6)
+            separator.set_margin_bottom(12)
+            content_box.append(separator)
         
         lines = info_text.strip().split('\n')
         
@@ -1448,6 +1390,44 @@ class PkgMan(Adw.ApplicationWindow):
         toolbar_view.set_content(scroll)
         return False
 
+    def toggle_package_freeze(self, button, package_name):
+        """Toggle package freeze status (add/remove from IgnorePkg)"""
+        if not LAZY_AVAILABLE:
+            return
+
+        is_frozen = is_in_ignorepkg(package_name)
+
+        if is_frozen:
+            # Unfreeze
+            if remove_from_ignorepkg(package_name):
+                button.set_label("Freeze")
+                button.remove_css_class("destructive-action")
+                button.add_css_class("suggested-action")
+                button.set_tooltip_text("Add to IgnorePkg to prevent updates")
+                # Update status label if it exists
+                parent = button.get_parent()
+                if parent:
+                    status_label = parent.get_last_child()
+                    if status_label and isinstance(status_label, Gtk.Label):
+                        status_label.set_label("[Updates enabled]")
+            else:
+                self.show_error(f"Failed to unfreeze {package_name}")
+        else:
+            # Freeze
+            if add_to_ignorepkg(package_name):
+                button.set_label("Unfreeze")
+                button.remove_css_class("suggested-action")
+                button.add_css_class("destructive-action")
+                button.set_tooltip_text("Remove from IgnorePkg")
+                # Update status label if it exists
+                parent = button.get_parent()
+                if parent:
+                    status_label = parent.get_last_child()
+                    if status_label and isinstance(status_label, Gtk.Label):
+                        status_label.set_label("[Frozen]")
+            else:
+                self.show_error(f"Failed to freeze {package_name}")
+
     def run_cmd(self, cmd):
         dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
         dialog.set_default_size(800, 600)
@@ -1467,6 +1447,15 @@ class PkgMan(Adw.ApplicationWindow):
 
         # Apply terminal styling
         terminal.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
+
+        # Store terminal reference on dialog for cleanup
+        dialog.terminal = terminal
+        dialog.confirmed_close = False  # Flag to prevent close confirmation loop
+
+        # Add escape key handler to terminal widget
+        terminal_key_controller = Gtk.EventControllerKey()
+        terminal_key_controller.connect("key-pressed", self.on_terminal_escape_pressed, dialog)
+        terminal.add_controller(terminal_key_controller)
 
         scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
         scroll.set_child(terminal)
@@ -1491,6 +1480,17 @@ class PkgMan(Adw.ApplicationWindow):
         content_box.append(status_box)
 
         toolbar_view.set_content(content_box)
+
+        # Handle close button (X) with same confirmation as escape
+        def on_close_request(window):
+            # If already confirmed, allow close
+            if dialog.confirmed_close:
+                return False  # Allow close
+            # Otherwise show confirmation
+            self.on_terminal_escape_pressed(None, Gdk.KEY_Escape, 0, 0, dialog)
+            return True  # Prevent default close
+
+        dialog.connect("close-request", on_close_request)
         dialog.present()
 
         # Start progress bar pulsing
@@ -1514,10 +1514,6 @@ class PkgMan(Adw.ApplicationWindow):
             else:
                 GLib.idle_add(lambda: progress.add_css_class("error"))
                 GLib.idle_add(lambda: status_label.set_text(f"✗ Error (exit code: {status})"))
-
-            # Remove from running processes
-            if terminal_pid and terminal_pid in [p.pid for p in self.running_processes if hasattr(p, 'pid')]:
-                self.running_processes[:] = [p for p in self.running_processes if not (hasattr(p, 'pid') and p.pid == terminal_pid)]
 
         terminal.connect("child-exited", on_child_exited)
 
@@ -1649,11 +1645,11 @@ class PkgMan(Adw.ApplicationWindow):
 
     def display_dependency_results(self, toolbar_view, heavy_packages):
         """Display the dependency analysis results"""
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        content_box.set_margin_top(12)
-        content_box.set_margin_bottom(12)
-        content_box.set_margin_start(12)
-        content_box.set_margin_end(12)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_box.set_margin_top(12)
+        main_box.set_margin_bottom(12)
+        main_box.set_margin_start(12)
+        main_box.set_margin_end(12)
 
         if not heavy_packages:
             # No heavy packages found
@@ -1672,7 +1668,8 @@ class PkgMan(Adw.ApplicationWindow):
             subtitle.add_css_class("dim-label")
             empty_box.append(subtitle)
 
-            toolbar_view.set_content(empty_box)
+            main_box.append(empty_box)
+            toolbar_view.set_content(main_box)
         else:
             # Show list of heavy packages
             info_label = Gtk.Label(
@@ -1680,13 +1677,26 @@ class PkgMan(Adw.ApplicationWindow):
                 halign=Gtk.Align.START
             )
             info_label.add_css_class("heading")
-            content_box.append(info_label)
+            main_box.append(info_label)
 
             scroll = Gtk.ScrolledWindow(vexpand=True)
             scroll.add_css_class("card")
 
+            # Enable keyboard navigation
+            scroll.set_can_focus(True)
+            scroll.set_focus_on_click(True)
+
             listbox = Gtk.ListBox()
             listbox.add_css_class("boxed-list")
+
+            # Enable keyboard navigation for listbox
+            listbox.set_can_focus(True)
+            listbox.set_selection_mode(Gtk.SelectionMode.BROWSE)
+
+            # Add keyboard event controller for arrow keys
+            key_controller = Gtk.EventControllerKey()
+            key_controller.connect("key-pressed", self.on_list_key_pressed, listbox)
+            listbox.add_controller(key_controller)
 
             for pkg_name, dep_count in heavy_packages:
                 row = Adw.ActionRow(
@@ -1703,8 +1713,9 @@ class PkgMan(Adw.ApplicationWindow):
                     row.add_suffix(remove_btn)
 
                     # Add indicator
-                    indicator = Gtk.Label(label="🔒")
+                    indicator = Gtk.Label(label="[FROZEN]")
                     indicator.set_tooltip_text("In IgnorePkg")
+                    indicator.add_css_class("dim-label")
                     row.add_suffix(indicator)
                 else:
                     # Show add button
@@ -1717,16 +1728,16 @@ class PkgMan(Adw.ApplicationWindow):
                 listbox.append(row)
 
             scroll.set_child(listbox)
-            content_box.append(scroll)
+            main_box.append(scroll)
 
-            toolbar_view.set_content(content_box)
+            toolbar_view.set_content(main_box)
 
         return False
 
     def handle_add_ignorepkg(self, button, package_name):
         """Add package to IgnorePkg"""
         if LAZY_AVAILABLE and add_to_ignorepkg(package_name):
-            button.set_label("✓ Added")
+            button.set_label("Added")
             button.set_sensitive(False)
             # Update button after 1 second
             GLib.timeout_add(1000, lambda: self.update_ignorepkg_button(button, package_name, True))
@@ -1736,7 +1747,7 @@ class PkgMan(Adw.ApplicationWindow):
     def handle_remove_ignorepkg(self, button, package_name):
         """Remove package from IgnorePkg"""
         if LAZY_AVAILABLE and remove_from_ignorepkg(package_name):
-            button.set_label("✓ Removed")
+            button.set_label("Removed")
             button.set_sensitive(False)
             # Update button after 1 second
             GLib.timeout_add(1000, lambda: self.update_ignorepkg_button(button, package_name, False))
@@ -1790,11 +1801,9 @@ class App(Adw.Application):
             GLib.idle_add(lambda: self.window.show_settings(None) or False)
 
     def do_shutdown(self):
-        """Handle application shutdown"""
-        if self.window:
-            self.window.cleanup_processes()
-        Adw.Application.do_shutdown(self)
+        sys.exit()
 
 if __name__ == "__main__":
     Adw.init()
     App().run(sys.argv)
+    Adw.Application.do_shutdown(self)
