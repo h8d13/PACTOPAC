@@ -10,6 +10,7 @@ import os
 import sys
 import re
 import signal
+from difflib import SequenceMatcher
 
 # Import lazy package functions
 try:
@@ -941,6 +942,24 @@ class PkgMan(Adw.ApplicationWindow):
         else:  # all tab
             return self.all_list
     
+    def fuzzy_match(self, search_text, package_name):
+        """Check if search_text fuzzy matches package_name"""
+        if not search_text:
+            return True, 1.0
+
+        search_lower = search_text.lower()
+        name_lower = package_name.lower()
+
+        # Exact substring match gets priority
+        if search_lower in name_lower:
+            return True, 1.0
+
+        # Fuzzy match using SequenceMatcher
+        similarity = SequenceMatcher(None, search_lower, name_lower).ratio()
+
+        # Match if similarity is above threshold (0.6 = 60% similar)
+        return similarity >= 0.6, similarity
+
     def refresh_list(self):
         # Determine which list and button to use based on current tab
         if self.current_tab == "installed":
@@ -955,27 +974,48 @@ class PkgMan(Adw.ApplicationWindow):
         else:  # all tab
             current_list = self.all_list
             load_more_btn = self.all_load_more
-        
+
         # Clear the current list if starting from page 0
         if self.current_page == 0:
             while child := current_list.get_first_child():
                 current_list.remove(child)
-        
-        search_text = self.search.get_text().lower()
-        
-        # Filter packages based on search and tab
+
+        search_text = self.search.get_text()
+
+        # Filter packages based on search and tab with fuzzy matching
+        matches_with_scores = []
+
         if self.current_tab == "installed":
             # Show installed pacman packages only
-            self.filtered_packages = [p for p in self.packages if p[2] and len(p) > 3 and p[3] == "pacman" and (search_text in p[0].lower() or not search_text)]
+            for p in self.packages:
+                if p[2] and len(p) > 3 and p[3] == "pacman":
+                    matches, score = self.fuzzy_match(search_text, p[0])
+                    if matches:
+                        matches_with_scores.append((p, score))
         elif self.current_tab == "available":
             # Show available packages (not installed)
-            self.filtered_packages = [p for p in self.packages if not p[2] and (search_text in p[0].lower() or not search_text)]
+            for p in self.packages:
+                if not p[2]:
+                    matches, score = self.fuzzy_match(search_text, p[0])
+                    if matches:
+                        matches_with_scores.append((p, score))
         elif self.current_tab == "flatpak":
             # Show installed flatpak packages only
-            self.filtered_packages = [p for p in self.packages if p[2] and len(p) > 3 and p[3] == "flatpak" and (search_text in p[0].lower() or not search_text)]
+            for p in self.packages:
+                if p[2] and len(p) > 3 and p[3] == "flatpak":
+                    matches, score = self.fuzzy_match(search_text, p[0])
+                    if matches:
+                        matches_with_scores.append((p, score))
         else:  # all tab
             # Show all packages (installed and available)
-            self.filtered_packages = [p for p in self.packages if (search_text in p[0].lower() or not search_text)]
+            for p in self.packages:
+                matches, score = self.fuzzy_match(search_text, p[0])
+                if matches:
+                    matches_with_scores.append((p, score))
+
+        # Sort by score (highest first) to show best matches at the top
+        matches_with_scores.sort(key=lambda x: x[1], reverse=True)
+        self.filtered_packages = [p for p, score in matches_with_scores]
         
         total_filtered = len(self.filtered_packages)
         start_idx = self.current_page * self.page_size
