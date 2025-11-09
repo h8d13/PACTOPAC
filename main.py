@@ -130,11 +130,9 @@ class PkgMan(Adw.ApplicationWindow):
         self.search.add_controller(search_key_controller)
 
         box.append(self.search)
-        
+
         # Add view stack for Installed/Available tabs
         self.view_stack = Adw.ViewStack()
-        self.view_switcher = Adw.ViewSwitcher()
-        self.view_switcher.set_stack(self.view_stack)
 
         # Create Installed tab
         installed_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -158,7 +156,7 @@ class PkgMan(Adw.ApplicationWindow):
         self.installed_list.add_controller(key_controller)
 
         installed_container.append(self.installed_list)
-        
+
         # Load More button with consistent styling
         self.installed_load_more = Gtk.Button(label="Load More", sensitive=False)
         self.installed_load_more.connect("clicked", self.load_more_packages)
@@ -184,8 +182,9 @@ class PkgMan(Adw.ApplicationWindow):
         self.flatpak_list.add_css_class("boxed-list")
         self.flatpak_list.connect("row-selected", self.on_select)
 
-        # Enable keyboard navigation
+        # Enable keyboard navigation but skip in tab order
         self.flatpak_list.set_can_focus(True)
+        self.flatpak_list.set_focus_on_click(False)
         self.flatpak_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
 
         # Add keyboard event controller for arrow keys
@@ -221,8 +220,9 @@ class PkgMan(Adw.ApplicationWindow):
         self.available_list.add_css_class("boxed-list")
         self.available_list.connect("row-selected", self.on_select)
 
-        # Enable keyboard navigation
+        # Enable keyboard navigation but skip in tab order
         self.available_list.set_can_focus(True)
+        self.available_list.set_focus_on_click(False)
         self.available_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
 
         # Add keyboard event controller for arrow keys
@@ -258,8 +258,9 @@ class PkgMan(Adw.ApplicationWindow):
         self.all_list.add_css_class("boxed-list")
         self.all_list.connect("row-selected", self.on_select)
 
-        # Enable keyboard navigation
+        # Enable keyboard navigation but skip in tab order
         self.all_list.set_can_focus(True)
+        self.all_list.set_focus_on_click(False)
         self.all_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
 
         # Add keyboard event controller for arrow keys
@@ -292,8 +293,50 @@ class PkgMan(Adw.ApplicationWindow):
         
         box.append(self.view_stack)
 
-        # Add view switcher below the list
-        box.append(self.view_switcher)
+        # Create compact filter button with popover (below the list)
+        filter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        filter_box.set_margin_start(12)
+        filter_box.set_margin_end(12)
+        filter_box.set_margin_top(6)
+
+        self.filter_label = Gtk.Label(label="Filter: Installed", halign=Gtk.Align.START, hexpand=True)
+        self.filter_label.add_css_class("dim-label")
+        filter_box.append(self.filter_label)
+
+        self.filter_button = Gtk.MenuButton(icon_name="view-more-symbolic")
+        self.filter_button.set_tooltip_text("Change filter")
+        self.filter_button.set_direction(Gtk.ArrowType.LEFT)  # Open to the left
+
+        # Create popover with filter options
+        popover = Gtk.Popover()
+        popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        popover_box.set_margin_top(6)
+        popover_box.set_margin_bottom(6)
+        popover_box.set_margin_start(6)
+        popover_box.set_margin_end(6)
+
+        # Create filter buttons
+        installed_btn = Gtk.Button(label="Installed", halign=Gtk.Align.FILL)
+        installed_btn.connect("clicked", lambda b: self.change_filter("installed", popover))
+        popover_box.append(installed_btn)
+
+        flatpak_btn = Gtk.Button(label="Flatpak", halign=Gtk.Align.FILL)
+        flatpak_btn.connect("clicked", lambda b: self.change_filter("flatpak", popover))
+        popover_box.append(flatpak_btn)
+
+        available_btn = Gtk.Button(label="Available", halign=Gtk.Align.FILL)
+        available_btn.connect("clicked", lambda b: self.change_filter("available", popover))
+        popover_box.append(available_btn)
+
+        all_btn = Gtk.Button(label="All", halign=Gtk.Align.FILL)
+        all_btn.connect("clicked", lambda b: self.change_filter("all", popover))
+        popover_box.append(all_btn)
+
+        popover.set_child(popover_box)
+        self.filter_button.set_popover(popover)
+        filter_box.append(self.filter_button)
+
+        box.append(filter_box)
 
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, homogeneous=True)
         
@@ -303,15 +346,15 @@ class PkgMan(Adw.ApplicationWindow):
         self.action_btn = Gtk.Button(label="Install", sensitive=False)
         self.action_btn.add_css_class("suggested-action")
         self.action_btn.connect("clicked", self.handle_package_action)
-        
-        update_btn = Gtk.Button(label="Update", sensitive=True)
-        update_btn.connect("clicked", self.handle_update)
+
+        self.update_btn = Gtk.Button(label="Update", sensitive=True)
+        self.update_btn.connect("clicked", self.handle_update)
         
         clean_orphans_btn = Gtk.Button(label="Clean", sensitive=True)
         clean_orphans_btn.connect("clicked", self.handle_clean_orphans)
         clean_orphans_btn.add_css_class("destructive-action")
 
-        for btn in [update_btn, self.info_btn, self.action_btn, clean_orphans_btn]:
+        for btn in [self.info_btn, self.action_btn, self.update_btn, clean_orphans_btn]:
             btn_box.append(btn)
         box.append(btn_box)
         
@@ -343,19 +386,37 @@ class PkgMan(Adw.ApplicationWindow):
         if visible_child_name:
             self.current_tab = visible_child_name
             self.current_page = 0
-            self.refresh_list()    
-    
+            self.refresh_list()
+
+    def change_filter(self, filter_name, popover):
+        """Change the active filter and update label"""
+        self.view_stack.set_visible_child_name(filter_name)
+
+        # Update filter label
+        filter_names = {
+            "installed": "Installed",
+            "flatpak": "Flatpak",
+            "available": "Available",
+            "all": "All"
+        }
+        self.filter_label.set_label(f"Filter: {filter_names.get(filter_name, filter_name)}")
+
+        # Close popover
+        popover.popdown()
+
     def show_settings(self, button):
-        dialog = Adw.PreferencesWindow(transient_for=self, modal=True)
+        dialog = Adw.PreferencesDialog()
         dialog.set_title("Settings")
-        dialog.set_default_size(800, 600)
+        dialog.set_search_enabled(True)
+        dialog.set_content_width(800)
+        dialog.set_content_height(600)
 
         # Repository Settings Page
         repo_page = Adw.PreferencesPage(title="General", icon_name="folder-symbolic")
         dialog.add(repo_page)
         
         # Pacman repositories
-        pacman_group = Adw.PreferencesGroup(title="Pacman Repositories", description="Configure official Arch Linux repositories")
+        pacman_group = Adw.PreferencesGroup(title="Pacman Repositories", description="Configure official Arch/Artix Linux repositories")
         repo_page.add(pacman_group)
         
         # Detect distro for proper repo naming
@@ -468,10 +529,10 @@ class PkgMan(Adw.ApplicationWindow):
         about_group = Adw.PreferencesGroup()
         about_page.add(about_group)
         
-        app_row = Adw.ActionRow(title="PacToPac", subtitle="Suckless Arch Linux package manager")
+        app_row = Adw.ActionRow(title="PacToPac", subtitle="Suckless Arch/Artix Linux package manager")
         about_group.add(app_row)
         
-        version_row = Adw.ActionRow(title="Version", subtitle="1.0.6")
+        version_row = Adw.ActionRow(title="Version", subtitle="1.0.7")
         about_group.add(version_row)
         
         # Appearance group with theme toggle
@@ -507,20 +568,32 @@ class PkgMan(Adw.ApplicationWindow):
             subtitle="https://archlinux.org/news/"
         )
 
-        clipboard_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy to clipboard")
-        clipboard_btn.set_valign(Gtk.Align.CENTER)
-        clipboard_btn.connect("clicked", self.copy_arch_news_url)
-        arch_news_row.add_suffix(clipboard_btn)
+        arch_clipboard_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy to clipboard")
+        arch_clipboard_btn.set_valign(Gtk.Align.CENTER)
+        arch_clipboard_btn.connect("clicked", lambda b: self.copy_url_to_clipboard(b, "https://archlinux.org/news/"))
+        arch_news_row.add_suffix(arch_clipboard_btn)
 
         resources_group.add(arch_news_row)
 
-        dialog.present()
+        artix_news_row = Adw.ActionRow(
+            title="Artix Linux News",
+            subtitle="https://artixlinux.org/news.php"
+        )
 
-    def copy_arch_news_url(self, button):
-        """Copy Arch Linux news URL to clipboard"""
+        artix_clipboard_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy to clipboard")
+        artix_clipboard_btn.set_valign(Gtk.Align.CENTER)
+        artix_clipboard_btn.connect("clicked", lambda b: self.copy_url_to_clipboard(b, "https://artixlinux.org/news.php"))
+        artix_news_row.add_suffix(artix_clipboard_btn)
+
+        resources_group.add(artix_news_row)
+
+        dialog.present(self)
+
+    def copy_url_to_clipboard(self, button, url):
+        """Copy URL to clipboard"""
         clipboard = self.get_clipboard()
-        clipboard.set("https://archlinux.org/news/")
-        
+        clipboard.set(url)
+
         # Optional: show a brief confirmation
         button.set_icon_name("object-select-symbolic")
         GLib.timeout_add(1000, lambda: button.set_icon_name("edit-copy-symbolic"))
@@ -833,6 +906,7 @@ class PkgMan(Adw.ApplicationWindow):
         search_text = search_entry.get_text()
         if search_text.strip():
             self.view_stack.set_visible_child_name("all")
+            self.filter_label.set_label("Filter: All")
         self.refresh_list()
 
     def on_search_key_pressed(self, controller, keyval, keycode, state):
@@ -1060,9 +1134,17 @@ class PkgMan(Adw.ApplicationWindow):
         """Handle arrow key navigation in package lists"""
         from gi.repository import Gdk
 
-        # Tab/Shift+Tab: allow normal focus traversal between sections
-        if keyval == Gdk.KEY_Tab or keyval == Gdk.KEY_ISO_Left_Tab:
-            return False
+        # Tab: Skip list and go to next major section (buttons)
+        if keyval == Gdk.KEY_Tab:
+            # Move focus to the first button (info button)
+            self.info_btn.grab_focus()
+            return True
+
+        # Shift+Tab: Go back to filter button
+        if keyval == Gdk.KEY_ISO_Left_Tab:
+            # Move focus back to filter button
+            self.filter_button.grab_focus()
+            return True
 
         # Enter: install/remove selected package
         if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
@@ -1116,7 +1198,12 @@ class PkgMan(Adw.ApplicationWindow):
     def on_terminal_escape_pressed(self, controller, keyval, keycode, state, dialog):
         """Handle escape key press in terminal dialog"""
         if keyval == Gdk.KEY_Escape:
-            # Show confirmation dialog
+            # If process already finished, just close without confirmation
+            if dialog.process_finished:
+                dialog.close()
+                return True
+
+            # Show confirmation dialog only if process is still running
             confirm_dialog = Adw.AlertDialog(
                 heading="Exit Terminal?",
                 body="Are you sure you want to close this terminal? The running process will be terminated."
@@ -1258,7 +1345,12 @@ class PkgMan(Adw.ApplicationWindow):
         
         dialog = Adw.Window(title=f"Info: {pkg_name}", transient_for=self, modal=True)
         dialog.set_default_size(600, 400)
-        
+
+        # Add escape key handler to close dialog
+        info_key_controller = Gtk.EventControllerKey()
+        info_key_controller.connect("key-pressed", lambda c, k, kc, s: dialog.close() if k == Gdk.KEY_Escape else False)
+        dialog.add_controller(info_key_controller)
+
         toolbar_view = Adw.ToolbarView()
         toolbar_view.add_top_bar(Adw.HeaderBar())
         dialog.set_content(toolbar_view)
@@ -1470,7 +1562,7 @@ class PkgMan(Adw.ApplicationWindow):
                 self.show_error(f"Failed to freeze {package_name}")
 
     def run_cmd(self, cmd):
-        dialog = Adw.Window(title=f"Running: {' '.join(cmd[:2])}", transient_for=self, modal=True)
+        dialog = Adw.Window(title="Terminal", transient_for=self, modal=True)
         dialog.set_default_size(800, 600)
 
         toolbar_view = Adw.ToolbarView()
@@ -1492,6 +1584,7 @@ class PkgMan(Adw.ApplicationWindow):
         # Store terminal reference on dialog for cleanup
         dialog.terminal = terminal
         dialog.confirmed_close = False  # Flag to prevent close confirmation loop
+        dialog.process_finished = False  # Flag to track if process has exited
 
         # Add escape key handler to terminal widget
         terminal_key_controller = Gtk.EventControllerKey()
@@ -1502,6 +1595,11 @@ class PkgMan(Adw.ApplicationWindow):
         scroll.set_child(terminal)
         content_box.append(scroll)
 
+        # Progress bar with accelerating pulse effect (full width)
+        progress = Gtk.ProgressBar(show_text=False)
+        progress.set_valign(Gtk.Align.CENTER)
+        content_box.append(progress)
+
         # Status bar at bottom
         status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         status_box.set_margin_top(12)
@@ -1509,12 +1607,7 @@ class PkgMan(Adw.ApplicationWindow):
         status_box.set_margin_start(12)
         status_box.set_margin_end(12)
 
-        progress = Gtk.ProgressBar(show_text=False)
-        progress.set_size_request(120, -1)
-        progress.set_valign(Gtk.Align.CENTER)
-        status_box.append(progress)
-
-        status_label = Gtk.Label(label="Running command...", halign=Gtk.Align.START, hexpand=True)
+        status_label = Gtk.Label(label="Running command...", halign=Gtk.Align.START)
         status_label.add_css_class("dim-label")
         status_box.append(status_label)
 
@@ -1524,8 +1617,8 @@ class PkgMan(Adw.ApplicationWindow):
 
         # Handle close button (X) with same confirmation as escape
         def on_close_request(window):
-            # If already confirmed, allow close
-            if dialog.confirmed_close:
+            # If process finished or already confirmed, allow close
+            if dialog.process_finished or dialog.confirmed_close:
                 return False  # Allow close
             # Otherwise show confirmation
             self.on_terminal_escape_pressed(None, Gdk.KEY_Escape, 0, 0, dialog)
@@ -1534,14 +1627,35 @@ class PkgMan(Adw.ApplicationWindow):
         dialog.connect("close-request", on_close_request)
         dialog.present()
 
-        # Start progress bar pulsing
-        pulse_id = GLib.timeout_add(100, lambda: progress.pulse() or True)
+        # Start progress bar with accelerating pulse effect
+        pulse_position = [0.0]  # Current position (0.0 to 1.0)
+        pulse_speed = [0.01]    # Current speed, will accelerate
+
+        def accelerating_pulse():
+            # Update position
+            pulse_position[0] += pulse_speed[0]
+
+            # Accelerate as it moves
+            pulse_speed[0] += 0.0005
+
+            # Reset when reaching the end
+            if pulse_position[0] >= 1.0:
+                pulse_position[0] = 0.0
+                pulse_speed[0] = 0.01  # Reset to initial speed
+
+            progress.set_fraction(pulse_position[0])
+            return True  # Continue animation
+
+        pulse_id = GLib.timeout_add(16, accelerating_pulse)  # ~60fps
 
         # Track terminal PID for cleanup
         terminal_pid = None
 
         def on_child_exited(term, status):
             nonlocal terminal_pid
+
+            # Mark process as finished
+            dialog.process_finished = True
 
             # Stop progress bar pulsing and set to full
             GLib.source_remove(pulse_id)
