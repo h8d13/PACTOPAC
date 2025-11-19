@@ -7,4 +7,4 @@ sudo pacman -S python-gobject pacman-contrib vte4 gtk4 libadwaita
 sudo python3 main.py
 ```
 ---
-Can add an alias like `alias pacm='sudo -b python path/to/main.py; exit`
+Can add an alias like `alias pacm='sudo -b python path/to/main.py; exit'`
