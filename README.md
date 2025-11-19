@@ -1,4 +1,4 @@
-# pactopac  
+# pactopac - hide store 
 
 ```
 git clone https://github.com/h8d13/PACTOPAC
