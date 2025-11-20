@@ -807,7 +807,7 @@ class PkgMan(Adw.ApplicationWindow):
         # Add info about requirements
         requirements_row = Adw.ActionRow(
             title="Requirements",
-            subtitle="AUR packages need base-devel and git installed to build\n It is your responsability to check PKGBUILD and use reputable pkgs."
+            subtitle="AUR packages need base-devel and git installed to build\nIt is your responsability to check PKGBUILD and use reputable pkgs."
         )
         aur_group.add(requirements_row)
 
