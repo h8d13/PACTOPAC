@@ -11,7 +11,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Vte', '3.91')
 
-from gi.repository import Gtk, Adw, GLib, Vte, Gdk, Pango
+from gi.repository import Gtk, Adw, GLib, Vte, Gdk, Pango  # noqa: E402
 
 def check_pacman_contrib():
     """Check if pacman-contrib is installed (provides pactree for dependency analysis)"""
@@ -789,7 +789,7 @@ class PkgMan(Adw.ApplicationWindow):
         # Git mirror toggle
         git_mirror_row = Adw.SwitchRow(
             title="Use Git Mirror",
-            subtitle="Use --git-mirror flag for higher uptime when AUR is down"
+            subtitle="Use git mirrors if or when AUR is down"
         )
         git_mirror_row.set_active(self.get_git_mirror_enabled())
         git_mirror_row.connect("notify::active", self.on_git_mirror_toggle)
