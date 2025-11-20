@@ -43,7 +43,7 @@ def get_package_deps_count(package_name):
 def is_in_ignorepkg(package_name):
     """Check if a package is in IgnorePkg in /etc/pacman.conf"""
     try:
-        with open('/etc/pacman.conf', 'r') as f:
+        with open('/etc/pacman.conf') as f:
             content = f.read()
 
         # Look for IgnorePkg lines (commented or uncommented)
@@ -65,7 +65,7 @@ def is_in_ignorepkg(package_name):
 def add_to_ignorepkg(package_name):
     """Add a package to IgnorePkg in /etc/pacman.conf"""
     try:
-        with open('/etc/pacman.conf', 'r') as f:
+        with open('/etc/pacman.conf') as f:
             lines = f.readlines()
 
         new_lines = []
@@ -125,7 +125,7 @@ def add_to_ignorepkg(package_name):
 def remove_from_ignorepkg(package_name):
     """Remove a package from IgnorePkg in /etc/pacman.conf"""
     try:
-        with open('/etc/pacman.conf', 'r') as f:
+        with open('/etc/pacman.conf') as f:
             lines = f.readlines()
 
         new_lines = []
@@ -213,7 +213,7 @@ def detect_distro():
     Returns 'arch', 'artix', or 'unknown'
     """
     try:
-        with open('/etc/os-release', 'r') as f:
+        with open('/etc/os-release') as f:
             content = f.read()
             for line in content.split('\n'):
                 if line.startswith('ID='):
@@ -990,7 +990,7 @@ class PkgMan(Adw.ApplicationWindow):
         """Check if AUR support is enabled in config"""
         try:
             config_file = f"/home/{self.sudo_user}/.config/pactopac/aur_enabled"
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 return f.read().strip() == "1"
         except (FileNotFoundError, PermissionError, OSError):
             return False  # Default to disabled
@@ -1007,7 +1007,7 @@ class PkgMan(Adw.ApplicationWindow):
         """Check if git mirror is enabled in config"""
         try:
             config_file = f"/home/{self.sudo_user}/.config/pactopac/git_mirror_enabled"
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 return f.read().strip() == "1"
         except (FileNotFoundError, PermissionError, OSError):
             return False
@@ -1024,7 +1024,7 @@ class PkgMan(Adw.ApplicationWindow):
         """Check if remove cache is enabled in config"""
         try:
             config_file = f"/home/{self.sudo_user}/.config/pactopac/remove_cache_enabled"
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 return f.read().strip() == "1"
         except (FileNotFoundError, PermissionError, OSError):
             return False
@@ -1041,7 +1041,7 @@ class PkgMan(Adw.ApplicationWindow):
         """Check if noconfirm is enabled in config"""
         try:
             config_file = f"/home/{self.sudo_user}/.config/pactopac/noconfirm_enabled"
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 return f.read().strip() == "1"
         except (FileNotFoundError, PermissionError, OSError):
             return False  # Default to disabled (ask for confirmation)
@@ -1058,7 +1058,7 @@ class PkgMan(Adw.ApplicationWindow):
         """Get fuzzy match threshold from config"""
         try:
             config_file = f"/home/{self.sudo_user}/.config/pactopac/fuzzy_threshold"
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 return float(f.read().strip())
         except (FileNotFoundError, PermissionError, OSError, ValueError):
             return 0.4  # Default to 40%
@@ -1075,7 +1075,7 @@ class PkgMan(Adw.ApplicationWindow):
         """Get terminal font size from config"""
         try:
             config_file = f"/home/{self.sudo_user}/.config/pactopac/terminal_font_size"
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 return int(f.read().strip())
         except (FileNotFoundError, PermissionError, OSError, ValueError):
             return 12  # Default to 12pt
@@ -1102,7 +1102,7 @@ class PkgMan(Adw.ApplicationWindow):
     def check_multilib_enabled(self):
         """Check if multilib is enabled (works for both Arch and Artix)"""
         try:
-            with open('/etc/pacman.conf', 'r') as f:
+            with open('/etc/pacman.conf') as f:
                 content = f.read()
                 distro = detect_distro()
 
@@ -1146,7 +1146,7 @@ class PkgMan(Adw.ApplicationWindow):
     def load_theme_pref(self):
         try:
             config_file = f"/home/{self.sudo_user}/.config/pactopac/theme"
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 return f.read().strip() == "1"
         except (FileNotFoundError, PermissionError, OSError):
             return False  # Default to dark theme
@@ -1262,7 +1262,7 @@ class PkgMan(Adw.ApplicationWindow):
     def check_pacman_styling_enabled(self):
         """Check if pacman styling (Color and ILoveCandy) is enabled"""
         try:
-            with open('/etc/pacman.conf', 'r') as f:
+            with open('/etc/pacman.conf') as f:
                 content = f.read()
                 # Check for uncommented Color and ILoveCandy
                 has_color = 'Color\n' in content and '#Color' not in content
@@ -1307,7 +1307,7 @@ class PkgMan(Adw.ApplicationWindow):
     def disable_pacman_styling(self):
         """Disable pacman styling by reverting changes"""
         try:
-            with open('/etc/pacman.conf', 'r') as f:
+            with open('/etc/pacman.conf') as f:
                 lines = f.readlines()
             
             new_lines = []
@@ -1506,7 +1506,7 @@ class PkgMan(Adw.ApplicationWindow):
             cached_results = self.aur_search_cache[search_term]
             # Update installed status for cached results based on current installed_aur set
             updated_results = []
-            for pkg_name, repo, old_installed, pkg_type in cached_results:
+            for pkg_name, repo, _, pkg_type in cached_results:
                 is_installed = pkg_name in self.installed_aur
                 updated_results.append((pkg_name, repo, is_installed, pkg_type))
             # Update the cache with the new installed status
@@ -1998,7 +1998,7 @@ class PkgMan(Adw.ApplicationWindow):
                     # Send 'n' to answer any pending prompt, then close
                     if hasattr(dialog, 'terminal') and dialog.terminal:
                         try:
-                            dialog.terminal.feed_child('n\n'.encode('utf-8'))
+                            dialog.terminal.feed_child()
                         except (OSError, AttributeError):
                             pass
                     # Set flag to allow close without re-showing confirmation
