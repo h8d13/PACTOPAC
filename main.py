@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-import gi
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-gi.require_version('Vte', '3.91')
-from gi.repository import Gtk, Adw, GLib, Vte, Gdk
 import subprocess
 import threading
 import os
@@ -11,16 +6,188 @@ import sys
 import re
 import signal
 from difflib import SequenceMatcher
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+gi.require_version('Vte', '3.91')
 
-# Import lazy package functions
-try:
-    from lazy import (check_pacman_contrib, get_package_deps_count,
-                     is_in_ignorepkg, add_to_ignorepkg, remove_from_ignorepkg,
-                     get_packages_with_many_deps)
-    LAZY_AVAILABLE = True
-except ImportError:
-    LAZY_AVAILABLE = False
-    print("Warning: lazy.py not found - dependency analysis features disabled")
+from gi.repository import Gtk, Adw, GLib, Vte, Gdk, Pango
+
+def check_pacman_contrib():
+    """Check if pacman-contrib is installed (provides pactree for dependency analysis)"""
+    try:
+        result = subprocess.run(['pacman', '-Q', 'pacman-contrib'],
+                              capture_output=True, text=True)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+def get_package_deps_count(package_name):
+    """
+    Get the number of dependencies for a package using pactree.
+    Returns -1 if pacman-contrib is not available or error occurs.
+    """
+    if not check_pacman_contrib():
+        return -1
+
+    try:
+        # Use pactree to get dependency tree (-u for unique, -d 1 for depth 1 only)
+        result = subprocess.run(['pactree', '-u', package_name],
+                              capture_output=True, text=True, check=True)
+        # Count lines (excluding the package itself)
+        deps = result.stdout.strip().split('\n')
+        return max(0, len(deps) - 1)
+    except subprocess.CalledProcessError:
+        return -1
+
+def is_in_ignorepkg(package_name):
+    """Check if a package is in IgnorePkg in /etc/pacman.conf"""
+    try:
+        with open('/etc/pacman.conf', 'r') as f:
+            content = f.read()
+
+        # Look for IgnorePkg lines (commented or uncommented)
+        for line in content.split('\n'):
+            stripped = line.strip()
+            if stripped.startswith('#'):
+                continue
+            if stripped.startswith('IgnorePkg'):
+                # Extract packages after = sign
+                if '=' in stripped:
+                    packages = stripped.split('=', 1)[1].strip()
+                    pkg_list = [p.strip() for p in packages.split()]
+                    if package_name in pkg_list:
+                        return True
+        return False
+    except Exception:
+        return False
+
+def add_to_ignorepkg(package_name):
+    """Add a package to IgnorePkg in /etc/pacman.conf"""
+    try:
+        with open('/etc/pacman.conf', 'r') as f:
+            lines = f.readlines()
+
+        new_lines = []
+        found_ignorepkg = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Skip commented IgnorePkg lines
+            if stripped.startswith('#IgnorePkg'):
+                new_lines.append(line)
+                continue
+
+            # If we find an active IgnorePkg line, append to it
+            if stripped.startswith('IgnorePkg') and '=' in stripped:
+                found_ignorepkg = True
+                # Check if package already in line
+                if package_name not in stripped:
+                    line = line.rstrip() + f" {package_name}\n"
+                new_lines.append(line)
+            else:
+                new_lines.append(line)
+
+        # If no IgnorePkg line found, add one in the [options] section
+        if not found_ignorepkg:
+            new_lines_with_ignorepkg = []
+            in_options = False
+            added = False
+
+            for line in new_lines:
+                stripped = line.strip()
+                if stripped == '[options]':
+                    in_options = True
+                    new_lines_with_ignorepkg.append(line)
+                elif in_options and not added and (stripped.startswith('[') or not stripped or stripped.startswith('#')):
+                    # Add IgnorePkg before the next section or end of [options]
+                    if not stripped.startswith('['):
+                        new_lines_with_ignorepkg.append(f"IgnorePkg = {package_name}\n")
+                        added = True
+                    new_lines_with_ignorepkg.append(line)
+                    if stripped.startswith('['):
+                        in_options = False
+                else:
+                    new_lines_with_ignorepkg.append(line)
+
+            new_lines = new_lines_with_ignorepkg
+
+        # Write back
+        with open('/etc/pacman.conf', 'w') as f:
+            f.writelines(new_lines)
+
+        return True
+    except Exception as e:
+        print(f"Error adding to IgnorePkg: {e}")
+        return False
+
+def remove_from_ignorepkg(package_name):
+    """Remove a package from IgnorePkg in /etc/pacman.conf"""
+    try:
+        with open('/etc/pacman.conf', 'r') as f:
+            lines = f.readlines()
+
+        new_lines = []
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Skip commented lines
+            if stripped.startswith('#'):
+                new_lines.append(line)
+                continue
+
+            # Process IgnorePkg lines
+            if stripped.startswith('IgnorePkg') and '=' in stripped:
+                parts = stripped.split('=', 1)
+                packages = parts[1].strip().split()
+
+                # Remove the target package
+                packages = [p for p in packages if p != package_name]
+
+                # Only keep the line if there are remaining packages
+                if packages:
+                    new_lines.append(f"IgnorePkg = {' '.join(packages)}\n")
+                # else: skip the line entirely (remove empty IgnorePkg)
+            else:
+                new_lines.append(line)
+
+        # Write back
+        with open('/etc/pacman.conf', 'w') as f:
+            f.writelines(new_lines)
+
+        return True
+    except Exception as e:
+        print(f"Error removing from IgnorePkg: {e}")
+        return False
+
+def get_packages_with_many_deps(threshold=50):
+    """
+    Get list of installed packages with more than threshold dependencies.
+    Returns list of tuples: (package_name, dep_count)
+    Returns empty list if pacman-contrib not installed.
+    """
+    if not check_pacman_contrib():
+        return []
+
+    try:
+        # Get list of explicitly installed packages
+        result = subprocess.run(['pacman', '-Qe'],
+                              capture_output=True, text=True, check=True)
+        packages = [line.split()[0] for line in result.stdout.strip().split('\n') if line]
+
+        heavy_packages = []
+        for pkg in packages:
+            dep_count = get_package_deps_count(pkg)
+            if dep_count >= threshold:
+                heavy_packages.append((pkg, dep_count))
+
+        # Sort by dependency count (descending)
+        heavy_packages.sort(key=lambda x: x[1], reverse=True)
+        return heavy_packages
+    except Exception:
+        return []
 
 def is_pacman_running():
     """
@@ -55,7 +222,7 @@ def detect_distro():
                         return 'arch'
                     elif distro_id == 'artix':
                         return 'artix'
-    except:
+    except (FileNotFoundError, PermissionError, IndexError, OSError):
         pass
     return 'unknown'
 
@@ -65,13 +232,22 @@ class PkgMan(Adw.ApplicationWindow):
         self.set_title("PacToPac")
         self.set_default_size(800, 600)
 
-        if os.geteuid() != 0:
-            print("Error: Run with sudo", file=sys.stderr)
-            app.quit()
-            return
 
-        # Get SUDO_USER once at initialization
-        self.sudo_user = os.environ.get('SUDO_USER')
+        if os.geteuid() != 0:
+            print("Error: This application must be run with sudo", file=sys.stderr)
+            print("Usage: sudo python3 main.py", file=sys.stderr)
+            app.quit()
+            sys.exit(1)
+
+        # Get SUDO_USER - guaranteed to exist when run with sudo
+        sudo_user = os.environ.get('SUDO_USER')
+        if not sudo_user:
+            print("Error: SUDO_USER environment variable not found", file=sys.stderr)
+            print("Please run with: sudo python3 main.py", file=sys.stderr)
+            app.quit()
+            sys.exit(1)
+
+        self.sudo_user: str = sudo_user  # Type annotation: always a string
 
         self.packages = []
         self.filtered_packages = []
@@ -80,15 +256,16 @@ class PkgMan(Adw.ApplicationWindow):
         self.current_page = 0
         self.current_tab = "installed"  # Default to installed tab
         self.running_processes = []  # Track running pacman/flatpak processes
-        self._cleanup_done = False  # Flag to prevent duplicate cleanup
+        self.installed_aur = set()  # Track installed AUR packages
+        self.aur_search_cache = {}  # Cache AUR search results
+        self.aur_total_count = None  # Cache total AUR package count
+        self.aur_count_loading = False  # Flag to prevent duplicate count requests
+        self.fuzzy_threshold = self.get_fuzzy_threshold()  # Fuzzy match threshold
+        self.terminal_font_size = self.get_terminal_font_size()  # VTE terminal font size
         self.setup_ui()
         self.load_packages()
     
-    def signal_handler(self, signum, frame):
-        """Handle termination signals gracefully"""
-        print(f"\nReceived signal {signum}, cleaning up...")
-        sys.exit(0)
-        
+
     def monitor_processes_and_close(self, window):
         """Monitor processes and close window when all complete"""
         def check_processes():
@@ -101,9 +278,6 @@ class PkgMan(Adw.ApplicationWindow):
         
         # Check every 1 second
         GLib.timeout_add(1000, check_processes)
- 
-        # Update every 1 second
-        GLib.timeout_add(1000, update_process_indicator)
     
     def setup_ui(self):
         toolbar_view = Adw.ToolbarView()
@@ -176,7 +350,7 @@ class PkgMan(Adw.ApplicationWindow):
         flatpak_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.flatpak_scroll = Gtk.ScrolledWindow(vexpand=True)
         self.flatpak_scroll.add_css_class("card")
-        
+
         # Container for list and load more button
         flatpak_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.flatpak_list = Gtk.ListBox()
@@ -195,7 +369,7 @@ class PkgMan(Adw.ApplicationWindow):
         self.flatpak_list.add_controller(key_controller)
 
         flatpak_container.append(self.flatpak_list)
-        
+
         # Load More button with consistent styling
         self.flatpak_load_more = Gtk.Button(label="Load More", sensitive=False)
         self.flatpak_load_more.connect("clicked", self.load_more_packages)
@@ -204,11 +378,49 @@ class PkgMan(Adw.ApplicationWindow):
         self.flatpak_load_more.set_margin_start(6)
         self.flatpak_load_more.set_margin_end(6)
         flatpak_container.append(self.flatpak_load_more)
-        
+
         self.flatpak_scroll.set_child(flatpak_container)
         flatpak_page.append(self.flatpak_scroll)
-        
+
         self.view_stack.add_titled_with_icon(flatpak_page, "flatpak", "Flatpak", "application-x-addon-symbolic")
+
+        # Create AUR tab
+        aur_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.aur_scroll = Gtk.ScrolledWindow(vexpand=True)
+        self.aur_scroll.add_css_class("card")
+
+        # Container for list and load more button
+        aur_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.aur_list = Gtk.ListBox()
+        self.aur_list.add_css_class("boxed-list")
+        self.aur_list.connect("row-selected", self.on_select)
+
+        # Enable keyboard navigation but skip in tab order
+        self.aur_list.set_can_focus(True)
+        self.aur_list.set_focus_on_click(False)
+        self.aur_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+
+        # Add keyboard event controller for arrow keys
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_controller.connect("key-pressed", self.on_list_key_pressed, self.aur_list)
+        self.aur_list.add_controller(key_controller)
+
+        aur_container.append(self.aur_list)
+
+        # Load More button with consistent styling
+        self.aur_load_more = Gtk.Button(label="Load More", sensitive=False)
+        self.aur_load_more.connect("clicked", self.load_more_packages)
+        self.aur_load_more.set_margin_top(6)
+        self.aur_load_more.set_margin_bottom(6)
+        self.aur_load_more.set_margin_start(6)
+        self.aur_load_more.set_margin_end(6)
+        aur_container.append(self.aur_load_more)
+
+        self.aur_scroll.set_child(aur_container)
+        aur_page.append(self.aur_scroll)
+
+        self.view_stack.add_titled_with_icon(aur_page, "aur", "AUR", "software-properties-symbolic")
         
         # Create Available tab
         available_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -325,6 +537,10 @@ class PkgMan(Adw.ApplicationWindow):
         flatpak_btn.connect("clicked", lambda b: self.change_filter("flatpak", popover))
         popover_box.append(flatpak_btn)
 
+        aur_btn = Gtk.Button(label="AUR", halign=Gtk.Align.FILL)
+        aur_btn.connect("clicked", lambda b: self.change_filter("aur", popover))
+        popover_box.append(aur_btn)
+
         available_btn = Gtk.Button(label="Available", halign=Gtk.Align.FILL)
         available_btn.connect("clicked", lambda b: self.change_filter("available", popover))
         popover_box.append(available_btn)
@@ -397,6 +613,7 @@ class PkgMan(Adw.ApplicationWindow):
         filter_names = {
             "installed": "Installed",
             "flatpak": "Flatpak",
+            "aur": "AUR",
             "available": "Available",
             "all": "All"
         }
@@ -433,43 +650,75 @@ class PkgMan(Adw.ApplicationWindow):
         multilib_row.connect("notify::active", self.on_multilib_toggle)
         pacman_group.add(multilib_row)
 
-        # Dependency Management Group
-        if LAZY_AVAILABLE:
-            dep_group = Adw.PreferencesGroup(
-                title="Dependency Management",
-                description="Analyze and manage packages with many dependencies using IgnorePkg"
+        dep_group = Adw.PreferencesGroup(
+            title="Dependency Management",
+            description="Analyze and manage packages with many dependencies using IgnorePkg"
+        )
+        repo_page.add(dep_group)
+
+        # Check if pacman-contrib is installed
+        has_contrib = check_pacman_contrib()
+
+        if not has_contrib:
+            contrib_row = Adw.ActionRow(
+                title="pacman-contrib Required",
+                subtitle="Install pacman-contrib to enable dependency analysis (provides pactree)"
             )
-            repo_page.add(dep_group)
+            install_contrib_btn = Gtk.Button(label="Install")
+            install_contrib_btn.add_css_class("suggested-action")
+            install_contrib_btn.set_valign(Gtk.Align.CENTER)
+            install_contrib_btn.connect("clicked", lambda b: self.install_pacman_contrib(dialog))
+            contrib_row.add_suffix(install_contrib_btn)
+            dep_group.add(contrib_row)
+        else:
+            # Show button to analyze packages
+            analyze_row = Adw.ActionRow(
+                title="Analyze Heavy Packages",
+                subtitle="Find packages with many dependencies and manage IgnorePkg"
+            )
+            analyze_btn = Gtk.Button(label="Analyze")
+            analyze_btn.add_css_class("suggested-action")
+            analyze_btn.set_valign(Gtk.Align.CENTER)
+            analyze_btn.connect("clicked", self.show_dependency_analysis)
+            analyze_row.add_suffix(analyze_btn)
+            dep_group.add(analyze_row)
 
-            # Check if pacman-contrib is installed
-            has_contrib = check_pacman_contrib()
+        # UI Settings
+        ui_group = Adw.PreferencesGroup(title="Interface", description="Customize search and terminal appearance")
+        repo_page.add(ui_group)
 
-            if not has_contrib:
-                contrib_row = Adw.ActionRow(
-                    title="pacman-contrib Required",
-                    subtitle="Install pacman-contrib to enable dependency analysis (provides pactree)"
-                )
-                install_contrib_btn = Gtk.Button(label="Install")
-                install_contrib_btn.add_css_class("suggested-action")
-                install_contrib_btn.set_valign(Gtk.Align.CENTER)
-                install_contrib_btn.connect("clicked", lambda b: self.install_pacman_contrib(dialog))
-                contrib_row.add_suffix(install_contrib_btn)
-                dep_group.add(contrib_row)
-            else:
-                # Show button to analyze packages
-                analyze_row = Adw.ActionRow(
-                    title="Analyze Heavy Packages",
-                    subtitle="Find packages with many dependencies and manage IgnorePkg"
-                )
-                analyze_btn = Gtk.Button(label="Analyze")
-                analyze_btn.add_css_class("suggested-action")
-                analyze_btn.set_valign(Gtk.Align.CENTER)
-                analyze_btn.connect("clicked", self.show_dependency_analysis)
-                analyze_row.add_suffix(analyze_btn)
-                dep_group.add(analyze_row)
+        # Fuzzy search threshold
+        fuzzy_row = Adw.SpinRow.new_with_range(0.0, 1.0, 0.05)
+        fuzzy_row.set_title("Fuzzy Search Threshold")
+        fuzzy_row.set_subtitle("Lower = more results (0.0-1.0, default: 0.4)")
+        fuzzy_row.set_digits(2)
+        fuzzy_row.set_value(self.fuzzy_threshold)
+        fuzzy_row.connect("changed", self.on_fuzzy_threshold_changed)
+        ui_group.add(fuzzy_row)
+
+        # Terminal font size
+        font_size_row = Adw.SpinRow.new_with_range(8, 24, 1)
+        font_size_row.set_title("Terminal Font Size")
+        font_size_row.set_subtitle("Font size for command output terminal (default: 12)")
+        font_size_row.set_value(self.terminal_font_size)
+        font_size_row.connect("changed", self.on_terminal_font_size_changed)
+        ui_group.add(font_size_row)
+
+        # Package Operations Settings
+        operations_group = Adw.PreferencesGroup(title="Package Operations", description="Configure how package operations behave")
+        repo_page.add(operations_group)
+
+        # Noconfirm toggle
+        noconfirm_row = Adw.SwitchRow(
+            title="Skip Confirmation Prompts",
+            subtitle="Automatically proceed with package operations without asking for confirmation"
+        )
+        noconfirm_row.set_active(self.get_noconfirm_enabled())
+        noconfirm_row.connect("notify::active", self.on_noconfirm_toggle)
+        operations_group.add(noconfirm_row)
 
         # Flatpak Settings Page
-        flatpak_page = Adw.PreferencesPage(title="Flatpak", icon_name="application-x-addon-symbolic")
+        flatpak_page = Adw.PreferencesPage(title="Flatpak", icon_name="application-x-executable-symbolic")
         dialog.add(flatpak_page)
         
         flatpak_group = Adw.PreferencesGroup(title="Flatpak Configuration", description="Universal application packages")
@@ -522,6 +771,46 @@ class PkgMan(Adw.ApplicationWindow):
 
         flatpak_group.add(clean_flatpak_row)
 
+        # AUR Settings Page
+        aur_page = Adw.PreferencesPage(title="AUR", icon_name="package-x-generic-symbolic")
+        dialog.add(aur_page)
+
+        aur_group = Adw.PreferencesGroup(title="AUR Configuration", description="Arch User Repository package support using Grimaur-too")
+        aur_page.add(aur_group)
+
+        aur_enable_row = Adw.SwitchRow(
+            title="Enable AUR Support",
+            subtitle="Enable AUR package installation and management using ryk4rd/grimaur"
+        )
+        aur_enable_row.set_active(self.get_grimaur_enabled())
+        aur_enable_row.connect("notify::active", self.on_aur_toggle)
+        aur_group.add(aur_enable_row)
+
+        # Git mirror toggle
+        git_mirror_row = Adw.SwitchRow(
+            title="Use Git Mirror",
+            subtitle="Use --git-mirror flag for higher uptime when AUR is down"
+        )
+        git_mirror_row.set_active(self.get_git_mirror_enabled())
+        git_mirror_row.connect("notify::active", self.on_git_mirror_toggle)
+        aur_group.add(git_mirror_row)
+
+        # Remove cache toggle
+        remove_cache_row = Adw.SwitchRow(
+            title="Remove Cache on Uninstall",
+            subtitle="Delete cached build files when removing AUR packages"
+        )
+        remove_cache_row.set_active(self.get_remove_cache_enabled())
+        remove_cache_row.connect("notify::active", self.on_remove_cache_toggle)
+        aur_group.add(remove_cache_row)
+
+        # Add info about requirements
+        requirements_row = Adw.ActionRow(
+            title="Requirements",
+            subtitle="AUR packages need base-devel and git installed to build\n It is your responsability to check PKGBUILD and use reputable pkgs."
+        )
+        aur_group.add(requirements_row)
+
         # About Page
         about_page = Adw.PreferencesPage(title="Misc", icon_name="help-about-symbolic")
         dialog.add(about_page)
@@ -530,10 +819,10 @@ class PkgMan(Adw.ApplicationWindow):
         about_group = Adw.PreferencesGroup()
         about_page.add(about_group)
         
-        app_row = Adw.ActionRow(title="PacToPac", subtitle="Suckless Arch/Artix Linux package manager")
+        app_row = Adw.ActionRow(title="PacToPac // Grimaur2", subtitle="Suckless Arch/Artix Linux package manager")
         about_group.add(app_row)
         
-        version_row = Adw.ActionRow(title="Version", subtitle="1.0.7")
+        version_row = Adw.ActionRow(title="Version", subtitle="1.0.8")
         about_group.add(version_row)
         
         # Appearance group with theme toggle
@@ -568,13 +857,17 @@ class PkgMan(Adw.ApplicationWindow):
             title="Arch Linux News",
             subtitle="https://archlinux.org/news/"
         )
-
+        arch_aur_row = Adw.ActionRow(
+            title="Arch Linux AUR",
+            subtitle="https://aur.archlinux.org/packages"
+        )
         arch_clipboard_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy to clipboard")
         arch_clipboard_btn.set_valign(Gtk.Align.CENTER)
         arch_clipboard_btn.connect("clicked", lambda b: self.copy_url_to_clipboard(b, "https://archlinux.org/news/"))
         arch_news_row.add_suffix(arch_clipboard_btn)
 
         resources_group.add(arch_news_row)
+        resources_group.add(arch_aur_row)
 
         artix_news_row = Adw.ActionRow(
             title="Artix Linux News",
@@ -602,11 +895,10 @@ class PkgMan(Adw.ApplicationWindow):
     def handle_flatpak_update(self, button):
         """Update all Flatpak applications"""
         if self.check_fp():
-            ## Needs to be ran in user session
-            if self.sudo_user:
-                self.run_cmd(['sudo', '-u', self.sudo_user, 'flatpak', 'update', '-y'])
-            else:
-                self.show_error("SUDO_USER not found")
+            cmd = ['sudo', '-u', self.sudo_user, 'flatpak', 'update']
+            if self.get_noconfirm_enabled():
+                cmd.append('-y')
+            self.run_cmd(cmd)
         else:
             self.show_error("Flatpak is not installed")
 
@@ -614,10 +906,10 @@ class PkgMan(Adw.ApplicationWindow):
         """Clean Flatpak cache and unused runtimes"""
         if self.check_fp():
             # This removes unused runtimes and clears cache
-            if self.sudo_user:
-                self.run_cmd(['sudo', '-u', self.sudo_user, 'flatpak', 'uninstall', '--unused', '-y'])
-            else:
-                self.show_error("SUDO_USER not found")
+            cmd = ['sudo', '-u', self.sudo_user, 'flatpak', 'uninstall', '--unused']
+            if self.get_noconfirm_enabled():
+                cmd.append('-y')
+            self.run_cmd(cmd)
             # flatpak uninstall --delete-data
             # flatpak repair --user
         else:
@@ -633,6 +925,8 @@ class PkgMan(Adw.ApplicationWindow):
                 if orphaned_packages:
                     # Remove orphaned packages
                     cmd = ['pacman', '-Rns'] + orphaned_packages.split('\n')
+                    if self.get_noconfirm_enabled():
+                        cmd.append('--noconfirm')
                     GLib.idle_add(lambda: self.run_cmd(cmd))
                 else:
                     # No orphans found, clean cache instead
@@ -660,34 +954,149 @@ class PkgMan(Adw.ApplicationWindow):
     def on_cache_clean_response(self, dialog, response):
         if response == "partial":
             # paccache -r: removes old versions, keeps last 3 of each package
-            self.run_cmd(['paccache', '-r'])
+            cmd = ['paccache', '-r']
+            if self.get_noconfirm_enabled():
+                cmd.append('--noconfirm')
+            self.run_cmd(cmd)
         elif response == "full":
             # pacman -Scc: removes all cached packages
-            self.run_cmd(['pacman', '-Scc'])
+            cmd = ['pacman', '-Scc']
+            if self.get_noconfirm_enabled():
+                cmd.append('--noconfirm')
+            self.run_cmd(cmd)
 
     def check_fp(self):
         try:
-            if self.sudo_user:
-                cmd = (['sudo', '-u', self.sudo_user, 'flatpak', '--version'])
-            else:
-                cmd = (['flatpak', '--version'])
+            cmd = (['sudo', '-u', self.sudo_user, 'flatpak', '--version'])
             subprocess.run(cmd, capture_output=True, check=True)
             return True
-        except:
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             return False
-    
+
+    def check_grimaur(self):
+        """Check if grimaur is available"""
+        try:
+            grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
+            if os.path.exists(grimaur_path):
+
+                result = subprocess.run(['sudo', '-u', self.sudo_user, 'python3', grimaur_path, '--help'], capture_output=True, timeout=5)
+
+                return result.returncode == 0
+        except (subprocess.SubprocessError, FileNotFoundError, OSError, TimeoutError):
+            pass
+        return False
+
+    def get_grimaur_enabled(self):
+        """Check if AUR support is enabled in config"""
+        try:
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/aur_enabled"
+            with open(config_file, 'r') as f:
+                return f.read().strip() == "1"
+        except (FileNotFoundError, PermissionError, OSError):
+            return False  # Default to disabled
+
+    def set_grimaur_enabled(self, enabled):
+        """Save AUR enable state to config"""
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "aur_enabled")
+        with open(config_file, 'w') as f:
+            f.write("1" if enabled else "0")
+
+    def get_git_mirror_enabled(self):
+        """Check if git mirror is enabled in config"""
+        try:
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/git_mirror_enabled"
+            with open(config_file, 'r') as f:
+                return f.read().strip() == "1"
+        except (FileNotFoundError, PermissionError, OSError):
+            return False
+
+    def set_git_mirror_enabled(self, enabled):
+        """Save git mirror enable state to config"""
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "git_mirror_enabled")
+        with open(config_file, 'w') as f:
+            f.write("1" if enabled else "0")
+
+    def get_remove_cache_enabled(self):
+        """Check if remove cache is enabled in config"""
+        try:
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/remove_cache_enabled"
+            with open(config_file, 'r') as f:
+                return f.read().strip() == "1"
+        except (FileNotFoundError, PermissionError, OSError):
+            return False
+
+    def set_remove_cache_enabled(self, enabled):
+        """Save remove cache enable state to config"""
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "remove_cache_enabled")
+        with open(config_file, 'w') as f:
+            f.write("1" if enabled else "0")
+
+    def get_noconfirm_enabled(self):
+        """Check if noconfirm is enabled in config"""
+        try:
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/noconfirm_enabled"
+            with open(config_file, 'r') as f:
+                return f.read().strip() == "1"
+        except (FileNotFoundError, PermissionError, OSError):
+            return False  # Default to disabled (ask for confirmation)
+
+    def set_noconfirm_enabled(self, enabled):
+        """Save noconfirm enable state to config"""
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "noconfirm_enabled")
+        with open(config_file, 'w') as f:
+            f.write("1" if enabled else "0")
+
+    def get_fuzzy_threshold(self):
+        """Get fuzzy match threshold from config"""
+        try:
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/fuzzy_threshold"
+            with open(config_file, 'r') as f:
+                return float(f.read().strip())
+        except (FileNotFoundError, PermissionError, OSError, ValueError):
+            return 0.4  # Default to 40%
+
+    def set_fuzzy_threshold(self, threshold):
+        """Save fuzzy match threshold to config"""
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "fuzzy_threshold")
+        with open(config_file, 'w') as f:
+            f.write(str(threshold))
+
+    def get_terminal_font_size(self):
+        """Get terminal font size from config"""
+        try:
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/terminal_font_size"
+            with open(config_file, 'r') as f:
+                return int(f.read().strip())
+        except (FileNotFoundError, PermissionError, OSError, ValueError):
+            return 12  # Default to 12pt
+
+    def set_terminal_font_size(self, size):
+        """Save terminal font size to config"""
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "terminal_font_size")
+        with open(config_file, 'w') as f:
+            f.write(str(int(size)))
+
     def check_fh(self):
         try:
-            if self.sudo_user:
-                result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remotes'], capture_output=True, text=True, check=True)
-            else:
-                result = subprocess.run(['flatpak', 'remotes'], capture_output=True, text=True, check=True)
-            # Check if flathub exists and is not disabled
+            result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remotes'], capture_output=True, text=True, check=True)
+
             for line in result.stdout.split('\n'):
                 if 'flathub' in line.lower():
                     return 'disabled' not in line.lower()
             return False
-        except:
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             return False
     
     def check_multilib_enabled(self):
@@ -703,7 +1112,7 @@ class PkgMan(Adw.ApplicationWindow):
                 else:
                     # Arch uses [multilib]
                     return bool(re.search(r'^\[multilib\]', content, re.MULTILINE))
-        except:
+        except (FileNotFoundError, PermissionError, OSError):
             return False
 
     def get_multilib_repo_name(self):
@@ -717,6 +1126,7 @@ class PkgMan(Adw.ApplicationWindow):
     def install_fp_and_refresh(self, dialog):
         """Install flatpak package"""
         dialog.close()
+        # Always use --noconfirm for utility installs like this
         self.run_cmd(['pacman', '-S', '--noconfirm', '--needed', 'flatpak'])
 
     def show_info(self, message):
@@ -726,24 +1136,24 @@ class PkgMan(Adw.ApplicationWindow):
         dialog.present(self)
 
     def save_theme_pref(self, is_light_theme):
-        config_dir = os.path.expanduser("~/.config/pactopac")
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
         os.makedirs(config_dir, exist_ok=True)
-        
+
         config_file = os.path.join(config_dir, "theme")
         with open(config_file, 'w') as f:
             f.write("1" if is_light_theme else "0")
 
     def load_theme_pref(self):
         try:
-            config_file = os.path.expanduser("~/.config/pactopac/theme")
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/theme"
             with open(config_file, 'r') as f:
                 return f.read().strip() == "1"
-        except:
+        except (FileNotFoundError, PermissionError, OSError):
             return False  # Default to dark theme
 
     def is_first_run(self):
         """Check if this is the first run by checking if theme config exists"""
-        config_file = os.path.expanduser("~/.config/pactopac/theme")
+        config_file = f"/home/{self.sudo_user}/.config/pactopac/theme"
         return not os.path.exists(config_file)
 
     def on_theme_toggle(self, switch_row, param):
@@ -786,18 +1196,68 @@ class PkgMan(Adw.ApplicationWindow):
     
     def on_fh_toggle(self, switch_row, param):
         enabled = switch_row.get_active()
-        if self.sudo_user:
-            if enabled:
-                # Always try to add first (handles both missing and disabled cases)
-                self.run_toggle(True, ['sudo', '-u', self.sudo_user, 'flatpak', 'remote-add', '--if-not-exists', 'flathub', 'https://dl.flathub.org/repo/flathub.flatpakrepo'], None)
-                # Then make sure it's enabled
-                subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-modify', '--enable', 'flathub'], check=False)
-            else:
-                self.run_toggle(False, None, ['sudo', '-u', self.sudo_user, 'flatpak', 'remote-modify', '--disable', 'flathub'])
+        if enabled:
+            # Always try to add first (handles both missing and disabled cases)
+            self.run_toggle(True, ['sudo', '-u', self.sudo_user, 'flatpak', 'remote-add', '--if-not-exists', 'flathub', 'https://dl.flathub.org/repo/flathub.flatpakrepo'], None)
+            # Then make sure it's enabled
+            subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-modify', '--enable', 'flathub'], check=False)
         else:
             self.show_error("SUDO_USER not found")
 
         GLib.idle_add(self.load_packages)
+
+    def on_aur_toggle(self, switch_row, param):
+        """Handle AUR support toggle"""
+        enabled = switch_row.get_active()
+        self.set_grimaur_enabled(enabled)
+        # Reload packages to reflect changes
+        GLib.idle_add(self.load_packages)
+
+    def on_git_mirror_toggle(self, switch_row, param):
+        """Handle git mirror toggle"""
+        enabled = switch_row.get_active()
+        self.set_git_mirror_enabled(enabled)
+
+    def on_remove_cache_toggle(self, switch_row, param):
+        """Handle remove cache toggle"""
+        enabled = switch_row.get_active()
+        self.set_remove_cache_enabled(enabled)
+
+    def on_noconfirm_toggle(self, switch_row, param):
+        """Handle noconfirm toggle"""
+        enabled = switch_row.get_active()
+        self.set_noconfirm_enabled(enabled)
+
+    def get_aur_count(self):
+        """Get total AUR package count using grimaur count command"""
+        if self.aur_total_count is not None:
+            return self.aur_total_count
+
+        if self.aur_count_loading:
+            return None
+
+        self.aur_count_loading = True
+
+        def fetch_count():
+            try:
+                grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
+                result = subprocess.run(
+                    ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'count'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    count = int(result.stdout.strip())
+                    self.aur_total_count = count
+                    GLib.idle_add(self.refresh_list)
+            except (subprocess.SubprocessError, ValueError, OSError):
+                pass
+            finally:
+                self.aur_count_loading = False
+
+        threading.Thread(target=fetch_count, daemon=True).start()
+        return None
 
     def check_pacman_styling_enabled(self):
         """Check if pacman styling (Color and ILoveCandy) is enabled"""
@@ -808,7 +1268,7 @@ class PkgMan(Adw.ApplicationWindow):
                 has_color = 'Color\n' in content and '#Color' not in content
                 has_candy = 'ILoveCandy' in content
                 return has_color and has_candy
-        except:
+        except (FileNotFoundError, PermissionError, OSError):
             return False
     
     def on_style_toggle(self, switch_row, param):
@@ -818,7 +1278,21 @@ class PkgMan(Adw.ApplicationWindow):
             self.enable_pacman_styling()
         else:
             self.disable_pacman_styling()
-    
+
+    def on_fuzzy_threshold_changed(self, spin_row):
+        """Handle fuzzy threshold change"""
+        threshold = spin_row.get_value()
+        self.fuzzy_threshold = threshold
+        self.set_fuzzy_threshold(threshold)
+        # Refresh the current search
+        self.refresh_list()
+
+    def on_terminal_font_size_changed(self, spin_row):
+        """Handle terminal font size change"""
+        size = int(spin_row.get_value())
+        self.terminal_font_size = size
+        self.set_terminal_font_size(size)
+
     def enable_pacman_styling(self):
         """Enable pacman styling using the existing script"""
         script_path = os.path.join(os.path.dirname(__file__), 'lib/stylepac.py')
@@ -854,30 +1328,82 @@ class PkgMan(Adw.ApplicationWindow):
         except Exception as e:
             self.show_error(f"Failed to disable pacman styling: {e}")
     
+    def update_package_status(self):
+        """Update package installation status without reloading the entire list"""
+        def update():
+            try:
+                # Get current installed packages
+                result = subprocess.run(['pacman', '-Q'], capture_output=True, text=True, check=True)
+                installed_pacman = {line.split()[0] for line in result.stdout.strip().split('\n') if line}
+
+                # Get installed flatpak packages
+                installed_flatpak = set()
+                try:
+                    result = subprocess.run(['flatpak', 'list', '--app', '--columns=application'],
+                                          capture_output=True, text=True, check=True)
+                    for line in result.stdout.strip().split('\n'):
+                        if line and not line.startswith('Application'):
+                            installed_flatpak.add(line.strip())
+                except Exception:
+                    pass
+
+                # Get installed AUR packages
+                self.refresh_installed_aur()
+
+                # Update package list with new installed status
+                updated_packages = []
+                for pkg in self.packages:
+                    pkg_name = pkg[0]
+                    pkg_repo = pkg[1]
+                    pkg_type = pkg[3] if len(pkg) > 3 else "pacman"
+
+                    # Determine new installed status
+                    if pkg_type == "aur":
+                        is_installed = pkg_name in self.installed_aur
+                    elif pkg_type == "flatpak":
+                        is_installed = pkg_name in installed_flatpak
+                    else:  # pacman
+                        is_installed = pkg_name in installed_pacman
+
+                    # Create updated package tuple
+                    if len(pkg) > 4:
+                        updated_pkg = (pkg_name, pkg_repo, is_installed, pkg_type, pkg[4])
+                    else:
+                        updated_pkg = (pkg_name, pkg_repo, is_installed, pkg_type)
+                    updated_packages.append(updated_pkg)
+
+                # Update packages list and refresh display
+                self.packages = updated_packages
+                GLib.idle_add(self.refresh_list)
+
+            except Exception as e:
+                print(f"Error updating package status: {e}")
+                # Fall back to full reload on error
+                GLib.idle_add(self.load_packages)
+
+        threading.Thread(target=update, daemon=True).start()
+        return False
+
     def load_packages(self):
         def load():
             try:
                 packages = []
-                
+
                 # Load pacman packages
                 all_pkgs = subprocess.run(['pacman', '-Sl'], capture_output=True, text=True, check=True)
                 installed = {line.split()[0] for line in subprocess.run(['pacman', '-Q'], capture_output=True, text=True).stdout.split('\n') if line}
-                
+
                 for line in all_pkgs.stdout.split('\n'):
                     if line:
                         parts = line.split(' ', 2)
                         if len(parts) >= 2:
                             packages.append((parts[1], parts[0], parts[1] in installed, "pacman"))
-                
+
                 # Load flatpak packages
                 if self.check_fp() and self.check_fh():
                     try:
-                        if self.sudo_user:
-                            available = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-ls', '--app', 'flathub'], capture_output=True, text=True, check=True)
-                            installed_fps = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'list', '--app'], capture_output=True, text=True, check=True)
-                        else:
-                            available = subprocess.run(['flatpak', 'remote-ls', '--app', 'flathub'], capture_output=True, text=True, check=True)
-                            installed_fps = subprocess.run(['flatpak', 'list', '--app'], capture_output=True, text=True, check=True)
+                        available = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-ls', '--app', 'flathub'], capture_output=True, text=True, check=True)
+                        installed_fps = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'list', '--app'], capture_output=True, text=True, check=True)
 
                         installed_ids = {line.split('\t')[1] for line in installed_fps.stdout.split('\n') if line.strip() and len(line.split('\t')) > 1}
 
@@ -888,13 +1414,144 @@ class PkgMan(Adw.ApplicationWindow):
                                     packages.append((parts[0], "flathub", parts[1] in installed_ids, "flatpak", parts[1]))
                     except subprocess.CalledProcessError:
                         pass
-                
+
+                # Load AUR packages
+                if self.check_grimaur() and self.get_grimaur_enabled():
+                    try:
+                        grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
+                        # Get installed AUR packages (foreign packages)
+
+                        result = subprocess.run(['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'list'], capture_output=True, text=True, timeout=30)
+
+                        installed_aur = set()
+                        if result.returncode == 0:
+                            for line in result.stdout.strip().split('\n'):
+                                # Strip leading whitespace and color codes
+                                line = line.strip()
+
+                                # Skip empty lines
+                                if not line:
+                                    continue
+
+                                # Skip header line (starts with "Installed foreign packages" or ends with colon)
+                                if line.lower().startswith('installed') or line.endswith(':'):
+                                    continue
+
+                                # Parse "package-name version" format
+                                parts = line.split()
+                                if len(parts) >= 1:  # Changed from >= 2 to handle packages without versions
+                                    pkg_name = parts[0]
+
+                                    # Validate package name format (alphanumeric, hyphens, underscores, dots, plus)
+                                    import re
+                                    if re.match(r'^[a-zA-Z0-9._+-]+$', pkg_name):
+                                        installed_aur.add(pkg_name)
+                                        packages.append((pkg_name, "aur", True, "aur"))
+
+                        # Store installed AUR packages for search functionality
+                        self.installed_aur = installed_aur
+                    except Exception as e:
+                        print(f"Error loading AUR packages: {e}")
+                        self.installed_aur = set()
+
                 GLib.idle_add(self.update_list, packages)
             except Exception as e:
                 GLib.idle_add(self.status.set_text, f"Error: {e}")
-        
+
         threading.Thread(target=load, daemon=True).start()
-    
+
+    def refresh_installed_aur(self):
+        """Refresh the list of installed AUR packages by calling grimaur list"""
+        try:
+            grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
+            result = subprocess.run(['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'list'],
+                                    capture_output=True, text=True, timeout=10)
+
+            installed_aur = set()
+            if result.returncode == 0:
+                import re
+                for line in result.stdout.strip().split('\n'):
+                    line = line.strip()
+
+                    # Skip empty lines
+                    if not line:
+                        continue
+
+                    # Skip header lines (e.g., "Installed foreign packages (1):")
+                    if line.lower().startswith('installed') or line.endswith(':'):
+                        continue
+
+                    # Parse "package-name version" format
+                    parts = line.split()
+                    if len(parts) >= 1:  # Changed from >= 2 to >= 1 to handle packages without versions
+                        pkg_name = parts[0]
+                        # Validate package name format
+                        if re.match(r'^[a-zA-Z0-9._+-]+$', pkg_name):
+                            installed_aur.add(pkg_name)
+
+            self.installed_aur = installed_aur
+        except Exception as e:
+            print(f"Error refreshing installed AUR list: {e}")
+
+    def search_aur_packages(self, search_term):
+        """Search AUR packages using grimaur search"""
+        if not self.check_grimaur() or not self.get_grimaur_enabled():
+            return []
+
+        # Refresh installed AUR packages list before searching (always refresh to get current status)
+        self.refresh_installed_aur()
+
+        # Check cache for search results (but we'll update installed status)
+        if search_term in self.aur_search_cache:
+            cached_results = self.aur_search_cache[search_term]
+            # Update installed status for cached results based on current installed_aur set
+            updated_results = []
+            for pkg_name, repo, old_installed, pkg_type in cached_results:
+                is_installed = pkg_name in self.installed_aur
+                updated_results.append((pkg_name, repo, is_installed, pkg_type))
+            # Update the cache with the new installed status
+            self.aur_search_cache[search_term] = updated_results
+            return updated_results
+
+        try:
+            grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
+            cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'search', search_term]
+            if self.get_git_mirror_enabled():
+                cmd.append('--git-mirror')
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+            aur_packages = []
+            if result.returncode == 0 and result.stdout.strip():
+                import re
+
+                for line in result.stdout.strip().split('\n'):
+                    line = line.strip()
+
+                    # Skip empty lines, description lines (start with spaces), and header lines
+                    if not line or line.startswith('    ') or line.lower().startswith('search'):
+                        continue
+
+                    # Remove numbering prefix like "1) " or "2) "
+                    line = re.sub(r'^\d+\)\s*', '', line)
+
+                    # Extract first word as package name
+                    parts = line.split()
+                    if parts:
+                        pkg_name = parts[0]
+
+                        # Validate package name format (alphanumeric, hyphens, underscores, dots, plus)
+                        if re.match(r'^[a-zA-Z0-9._+-]+$', pkg_name):
+                            # Check if it's installed
+                            is_installed = pkg_name in self.installed_aur
+                            aur_packages.append((pkg_name, "aur", is_installed, "aur"))
+
+            # Cache the results
+            self.aur_search_cache[search_term] = aur_packages
+            return aur_packages
+        except Exception as e:
+            print(f"Error searching AUR: {e}")
+            return []
+
     def update_list(self, packages):
         self.packages = packages
         self.current_page = 0
@@ -903,12 +1560,44 @@ class PkgMan(Adw.ApplicationWindow):
     
     def on_search_changed(self, search_entry):
         self.current_page = 0
+        search_text = search_entry.get_text().strip()
+
         # When searching, automatically switch to All tab
-        search_text = search_entry.get_text()
-        if search_text.strip():
+        if search_text:
             self.view_stack.set_visible_child_name("all")
             self.filter_label.set_label("Filter: All")
+
+            # Trigger async AUR search if enabled
+            if self.check_grimaur() and self.get_grimaur_enabled():
+                def search_and_update():
+                    aur_results = self.search_aur_packages(search_text)
+                    # Add AUR search results to packages list
+                    # Remove old AUR search results first
+                    GLib.idle_add(self.merge_aur_search_results, aur_results)
+
+                threading.Thread(target=search_and_update, daemon=True).start()
+        else:
+            # Clear search cache when search is cleared
+            self.aur_search_cache.clear()
+
         self.refresh_list()
+
+    def merge_aur_search_results(self, aur_results):
+        """Merge AUR search results into the main package list"""
+        # Remove existing AUR packages that are not installed
+        self.packages = [p for p in self.packages if not (len(p) > 3 and p[3] == "aur" and not p[2])]
+
+        # Create a set of existing package names to avoid duplicates
+        existing_names = {p[0] for p in self.packages}
+
+        # Add new AUR search results only if not already in the list
+        for aur_pkg in aur_results:
+            if aur_pkg[0] not in existing_names:
+                self.packages.append(aur_pkg)
+
+        # Refresh the display
+        self.refresh_list()
+        return False
 
     def on_search_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in search entry"""
@@ -939,6 +1628,8 @@ class PkgMan(Adw.ApplicationWindow):
             return self.available_list
         elif self.current_tab == "flatpak":
             return self.flatpak_list
+        elif self.current_tab == "aur":
+            return self.aur_list
         else:  # all tab
             return self.all_list
     
@@ -957,8 +1648,8 @@ class PkgMan(Adw.ApplicationWindow):
         # Fuzzy match using SequenceMatcher
         similarity = SequenceMatcher(None, search_lower, name_lower).ratio()
 
-        # Match if similarity is above threshold (0.6 = 60% similar)
-        return similarity >= 0.6, similarity
+        # Match if similarity is above user-configured threshold
+        return similarity >= self.fuzzy_threshold, similarity
 
     def refresh_list(self):
         # Determine which list and button to use based on current tab
@@ -971,6 +1662,9 @@ class PkgMan(Adw.ApplicationWindow):
         elif self.current_tab == "flatpak":
             current_list = self.flatpak_list
             load_more_btn = self.flatpak_load_more
+        elif self.current_tab == "aur":
+            current_list = self.aur_list
+            load_more_btn = self.aur_load_more
         else:  # all tab
             current_list = self.all_list
             load_more_btn = self.all_load_more
@@ -1003,6 +1697,13 @@ class PkgMan(Adw.ApplicationWindow):
             # Show installed flatpak packages only
             for p in self.packages:
                 if p[2] and len(p) > 3 and p[3] == "flatpak":
+                    matches, score = self.fuzzy_match(search_text, p[0])
+                    if matches:
+                        matches_with_scores.append((p, score))
+        elif self.current_tab == "aur":
+            # Show all AUR packages (installed and available from search)
+            for p in self.packages:
+                if len(p) > 3 and p[3] == "aur":
                     matches, score = self.fuzzy_match(search_text, p[0])
                     if matches:
                         matches_with_scores.append((p, score))
@@ -1042,7 +1743,8 @@ class PkgMan(Adw.ApplicationWindow):
         else:
             total_installed_pacman = sum(1 for pkg in self.packages if pkg[2] and len(pkg) > 3 and pkg[3] == "pacman")
             total_installed_flatpak = sum(1 for pkg in self.packages if pkg[2] and len(pkg) > 3 and pkg[3] == "flatpak")
-            total_installed = total_installed_pacman + total_installed_flatpak
+            total_installed_aur = sum(1 for pkg in self.packages if pkg[2] and len(pkg) > 3 and pkg[3] == "aur")
+            total_installed = total_installed_pacman + total_installed_flatpak + total_installed_aur
 
             if self.current_tab == "installed":
                 # Get total size for pacman packages only
@@ -1050,11 +1752,35 @@ class PkgMan(Adw.ApplicationWindow):
                 self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed_pacman} pacman installed • {total_size}")
             elif self.current_tab == "flatpak":
                 self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed_flatpak} flatpak installed")
+            elif self.current_tab == "aur":
+                # Get total AUR count
+                aur_count = self.get_aur_count()
+                if search_text:
+                    # When searching, show search result count
+                    total_aur_available = sum(1 for pkg in self.packages if not pkg[2] and len(pkg) > 3 and pkg[3] == "aur")
+                    self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed_aur} installed, {total_aur_available} in results")
+                else:
+                    # When not searching, show total AUR size
+                    if aur_count is not None:
+                        self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed_aur} installed, {aur_count:,} available in AUR")
+                    else:
+                        self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed_aur} installed, loading count...")
             elif self.current_tab == "available":
                 total_available = len(self.packages) - total_installed
                 self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_available} available packages")
             else:  # all tab
-                self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed, {len(self.packages) - total_installed} available")
+                total_available = len(self.packages) - total_installed
+                # Add AUR total count if enabled
+                if self.check_grimaur() and self.get_grimaur_enabled():
+                    aur_count = self.get_aur_count()
+                    if aur_count is not None:
+                        # Add AUR total minus already counted installed AUR packages
+                        total_available = total_available + aur_count - total_installed_aur
+                        self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed, {total_available:,} available")
+                    else:
+                        self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed, {total_available:,}+ available (loading AUR count...)")
+                else:
+                    self.status.set_text(f"Showing {total_showing} of {total_filtered} • {total_installed} installed, {total_available} available")
 
         # Auto-select first package (but don't auto-focus to allow mouse scrolling)
         if self.current_page == 0 and total_filtered > 0:
@@ -1072,21 +1798,23 @@ class PkgMan(Adw.ApplicationWindow):
         box.set_margin_bottom(6)
         box.set_margin_start(12)
         box.set_margin_end(12)
-        
+
         icon = Gtk.Label(label="●" if installed else "○", width_request=20)
         if installed:
             icon.add_css_class("success")
         box.append(icon)
-        
+
         name_label = Gtk.Label(label=name, halign=Gtk.Align.START, hexpand=True)
         box.append(name_label)
-        
+
         repo_label = Gtk.Label(label=repo)
         repo_label.add_css_class("dim-label")
         if pkg_type == "flatpak":
             repo_label.add_css_class("accent")
+        elif pkg_type == "aur":
+            repo_label.add_css_class("warning")
         box.append(repo_label)
-        
+
         row.set_child(box)
         row.pkg_data = pkg_data
         target_list.append(row)
@@ -1119,6 +1847,19 @@ class PkgMan(Adw.ApplicationWindow):
             else:
                 title = "No Flatpak Apps Installed"
                 subtitle = "Install Flatpak applications to see them here."
+        elif self.current_tab == "aur":
+            icon = Gtk.Image.new_from_icon_name("software-properties-symbolic")
+            icon.set_pixel_size(64)
+            icon.add_css_class("dim-label")
+            if not self.check_grimaur():
+                title = "Grimaur Not Available"
+                subtitle = "Grimaur is required for AUR support."
+            elif not self.get_grimaur_enabled():
+                title = "AUR Support Disabled"
+                subtitle = "Enable AUR support in Settings to install AUR packages."
+            else:
+                title = "No AUR Packages Found"
+                subtitle = "Search for AUR packages to install, or view installed ones here."
         elif self.current_tab == "available":
             icon = Gtk.Image.new_from_icon_name("system-search-symbolic")
             icon.set_pixel_size(64)
@@ -1172,7 +1913,6 @@ class PkgMan(Adw.ApplicationWindow):
 
     def on_list_key_pressed(self, controller, keyval, keycode, state, listbox):
         """Handle arrow key navigation in package lists"""
-        from gi.repository import Gdk
 
         # Tab: Skip list and go to next major section (buttons)
         if keyval == Gdk.KEY_Tab:
@@ -1259,7 +1999,7 @@ class PkgMan(Adw.ApplicationWindow):
                     if hasattr(dialog, 'terminal') and dialog.terminal:
                         try:
                             dialog.terminal.feed_child('n\n'.encode('utf-8'))
-                        except:
+                        except (OSError, AttributeError):
                             pass
                     # Set flag to allow close without re-showing confirmation
                     dialog.confirmed_close = True
@@ -1321,68 +2061,122 @@ class PkgMan(Adw.ApplicationWindow):
             vadj.set_value(new_value)
 
     def handle_package_action(self, button):
-        if not self.selected:
+        if not self.selected or len(self.selected) < 4:
             return
 
-        installed, pkg_type = self.selected[2], self.selected[3]
+        installed = self.selected[2]
+        pkg_type = self.selected[3]
 
         if pkg_type == "flatpak":
-            if self.sudo_user:
-                if installed:
-                    cmd = ['sudo', '-u', self.sudo_user, 'flatpak', 'uninstall', '-y', self.selected[4]]
-                else:
-                    cmd = ['sudo', '-u', self.sudo_user, 'flatpak', 'install', '-y', 'flathub', self.selected[4]]
-            else:
-                self.show_error("SUDO_USER not found")
+            if len(self.selected) < 5:
+                self.show_error("Invalid flatpak package data")
                 return
-        else:
+
+            app_id = self.selected[4]
             if installed:
-                cmd = ['pacman', '-R', self.selected[0]]
+                cmd = ['sudo', '-u', self.sudo_user, 'flatpak', 'uninstall', app_id]
+                if self.get_noconfirm_enabled():
+                    cmd.insert(4, '-y')  # Insert -y before app_id
             else:
-                cmd = ['pacman', '-S', self.selected[0]]
+                cmd = ['sudo', '-u', self.sudo_user, 'flatpak', 'install', 'flathub', app_id]
+                if self.get_noconfirm_enabled():
+                    cmd.insert(4, '-y')  # Insert -y before flathub
+
+        elif pkg_type == "aur":
+            grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
+
+            # Check if grimaur exists
+            if not os.path.exists(grimaur_path):
+                self.show_error(f"Grimaur not found at: {grimaur_path}")
+                return
+
+            pkg_name = self.selected[0]
+            if installed:
+                # Remove AUR package
+                cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'remove', pkg_name]
+                if self.get_remove_cache_enabled():
+                    cmd.append('--remove-cache')
+                if self.get_noconfirm_enabled():
+                    cmd.append('--noconfirm')
+            else:
+                # Install AUR package
+                cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'install', pkg_name]
+                if self.get_noconfirm_enabled():
+                    cmd.append('--noconfirm')
+                if self.get_git_mirror_enabled():
+                    cmd.append('--git-mirror')
+
+            # Print debug info
+            print(f"Running AUR command: {' '.join(cmd)}")
+        else:
+            pkg_name = self.selected[0]
+            if installed:
+                cmd = ['pacman', '-R', pkg_name]
+                if self.get_noconfirm_enabled():
+                    cmd.append('--noconfirm')
+            else:
+                cmd = ['pacman', '-S', pkg_name]
+                if self.get_noconfirm_enabled():
+                    cmd.append('--noconfirm')
 
         self.run_cmd(cmd)
     
     def handle_update(self, button):
-        self.run_cmd(['pacman', '-Syu'])
+        """Handle system update - use grimaur if AUR is enabled, otherwise use pacman"""
+        if self.check_grimaur() and self.get_grimaur_enabled():
+            # Use grimaur update --global (updates system first, then AUR packages)
+            grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
+            cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'update', '--global']
+            if self.get_noconfirm_enabled():
+                cmd.append('--noconfirm')
+            if self.get_git_mirror_enabled():
+                cmd.append('--git-mirror')
+            self.run_cmd(cmd)
+        else:
+            # Standard pacman update
+            cmd = ['pacman', '-Syu']
+            if self.get_noconfirm_enabled():
+                cmd.append('--noconfirm')
+            self.run_cmd(cmd)
     
     def get_total_package_sizes(self):
-        try:
-            # Get pacman package sizes
-            result = subprocess.run(['pacman', '-Qi'], capture_output=True, text=True, check=True)
-            total_size = 0
-            
-            for line in result.stdout.split('\n'):
-                if line.startswith('Installed Size'):
-                    size_str = line.split(':', 1)[1].strip()
-                    # Parse size (handles KiB, MiB, GiB)
-                    if 'KiB' in size_str:
-                        size = float(size_str.replace('KiB', '').strip()) * 1024
-                    elif 'MiB' in size_str:
-                        size = float(size_str.replace('MiB', '').strip()) * 1024 * 1024
-                    elif 'GiB' in size_str:
-                        size = float(size_str.replace('GiB', '').strip()) * 1024 * 1024 * 1024
-                    else:
-                        continue
-                    total_size += size
-            
-            # Format the total size nicely
-            if total_size > 1024**3:
-                return f"{total_size / (1024**3):.1f} GiB"
-            elif total_size > 1024**2:
-                return f"{total_size / (1024**2):.1f} MiB"
-            else:
-                return f"{total_size / 1024:.1f} KiB"
-                
-        except:
-            return "Unknown"
 
+        # Get pacman package sizes
+        result = subprocess.run(['pacman', '-Qi'], capture_output=True, text=True, check=True)
+        total_size = 0
+        
+        for line in result.stdout.split('\n'):
+            if line.startswith('Installed Size'):
+                size_str = line.split(':', 1)[1].strip()
+                # Parse size (handles KiB, MiB, GiB)
+                if 'KiB' in size_str:
+                    size = float(size_str.replace('KiB', '').strip()) * 1024
+                elif 'MiB' in size_str:
+                    size = float(size_str.replace('MiB', '').strip()) * 1024 * 1024
+                elif 'GiB' in size_str:
+                    size = float(size_str.replace('GiB', '').strip()) * 1024 * 1024 * 1024
+                else:
+                    continue
+                total_size += size
+        
+        # Format the total size nicely
+        if total_size > 1024**3:
+            return f"{total_size / (1024**3):.1f} GiB"
+        elif total_size > 1024**2:
+            return f"{total_size / (1024**2):.1f} MiB"
+        else:
+            return f"{total_size / 1024:.1f} KiB"
+                
     def show_package_info(self, button):
-        if not self.selected:
+        if not self.selected or len(self.selected) < 4:
             return
-        
-        pkg_name, pkg_type = self.selected[0], self.selected[3]
-        
+
+        # Store package info in local variables for thread safety
+        pkg_name = self.selected[0]
+        pkg_type = self.selected[3]
+        pkg_installed = self.selected[2] if len(self.selected) > 2 else False
+        pkg_app_id = self.selected[4] if len(self.selected) > 4 else None
+
         dialog = Adw.Window(title=f"Info: {pkg_name}", transient_for=self, modal=True)
         dialog.set_default_size(600, 400)
 
@@ -1394,55 +2188,55 @@ class PkgMan(Adw.ApplicationWindow):
         toolbar_view = Adw.ToolbarView()
         toolbar_view.add_top_bar(Adw.HeaderBar())
         dialog.set_content(toolbar_view)
-        
+
         spinner = Gtk.Spinner(spinning=True)
         loading_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
         loading_box.append(spinner)
         loading_box.append(Gtk.Label(label="Loading..."))
         toolbar_view.set_content(loading_box)
         dialog.present()
-        
+
         def load_info():
             try:
                 if pkg_type == "flatpak":
                     # For flatpak, we need the full application ID
-                    if len(self.selected) > 4:
-                        app_id = self.selected[4]  # Should be the full com.app.Name ID
-                        installed = self.selected[2]  # Whether it's installed
-
-                        if self.sudo_user:
-                            if installed:
-                                # For installed apps, use 'flatpak info'
-                                result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'info', app_id], capture_output=True, text=True, check=True)
-                            else:
-                                # For uninstalled apps, use 'flatpak remote-info' with the remote name
-                                result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-info', 'flathub', app_id], capture_output=True, text=True, check=True)
+                    if pkg_app_id:
+                        if pkg_installed:
+                            # For installed apps, use 'flatpak info'
+                            result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'info', pkg_app_id], capture_output=True, text=True, check=True)
                         else:
-                            if installed:
-                                # For installed apps, use 'flatpak info'
-                                result = subprocess.run(['flatpak', 'info', app_id], capture_output=True, text=True, check=True)
-                            else:
-                                # For uninstalled apps, use 'flatpak remote-info' with the remote name
-                                result = subprocess.run(['flatpak', 'remote-info', 'flathub', app_id], capture_output=True, text=True, check=True)
+                            # For uninstalled apps, use 'flatpak remote-info' with the remote name
+                            result = subprocess.run(['sudo', '-u', self.sudo_user, 'flatpak', 'remote-info', 'flathub', pkg_app_id], capture_output=True, text=True, check=True)
                     else:
                         print("Error - flatpak package missing app ID")
-                        GLib.idle_add(self.display_info, toolbar_view, f"Error: Flatpak package data incomplete")
+                        GLib.idle_add(self.display_info, toolbar_view, "Error: Flatpak package data incomplete")
                         return
+                elif pkg_type == "aur":
+                    # For AUR packages, use grimaur inspect
+                    grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
+                    cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'inspect', pkg_name, '--full']
+                    if self.get_git_mirror_enabled():
+                        cmd.append('--git-mirror')
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+
                 else:
                     result = subprocess.run(['pacman', '-Si', pkg_name], capture_output=True, text=True, check=True)
                     if not result.stdout.strip():
                         result = subprocess.run(['pacman', '-Qi', pkg_name], capture_output=True, text=True, check=True)
 
                 GLib.idle_add(self.display_info, toolbar_view, result.stdout)
+
             except subprocess.CalledProcessError as e:
                 error_msg = f"Failed to get info for {pkg_name}"
                 if pkg_type == "flatpak":
-                    cmd_used = f"flatpak {'info' if self.selected[2] else 'remote-info flathub'} {app_id if 'app_id' in locals() else 'unknown'}"
+                    cmd_used = f"flatpak {'info' if pkg_installed else 'remote-info flathub'} {pkg_app_id if pkg_app_id else 'unknown'}"
                     error_msg += f"\nCommand: {cmd_used}"
+                    error_msg += f"\nError: {e.stderr if e.stderr else 'Unknown error'}"
+                elif pkg_type == "aur":
                     error_msg += f"\nError: {e.stderr if e.stderr else 'Unknown error'}"
                 print(f"Debug - command failed: {error_msg}")
                 GLib.idle_add(self.display_info, toolbar_view, error_msg)
-        
+
         threading.Thread(target=load_info, daemon=True).start()
     
     def display_info(self, toolbar_view, info_text):
@@ -1459,7 +2253,7 @@ class PkgMan(Adw.ApplicationWindow):
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
         # Add freeze button for installed pacman packages
-        if self.selected and self.selected[2] and self.selected[3] == "pacman" and LAZY_AVAILABLE:
+        if self.selected and self.selected[2] and self.selected[3] == "pacman":
             pkg_name = self.selected[0]
             is_frozen = is_in_ignorepkg(pkg_name)
 
@@ -1565,8 +2359,6 @@ class PkgMan(Adw.ApplicationWindow):
 
     def toggle_package_freeze(self, button, package_name):
         """Toggle package freeze status (add/remove from IgnorePkg)"""
-        if not LAZY_AVAILABLE:
-            return
 
         is_frozen = is_in_ignorepkg(package_name)
 
@@ -1620,6 +2412,10 @@ class PkgMan(Adw.ApplicationWindow):
 
         # Apply terminal styling
         terminal.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
+
+        # Apply font size
+        font_desc = Pango.FontDescription(f"Monospace {self.terminal_font_size}")
+        terminal.set_font(font_desc)
 
         # Store terminal reference on dialog for cleanup
         dialog.terminal = terminal
@@ -1705,7 +2501,7 @@ class PkgMan(Adw.ApplicationWindow):
             if status == 0:
                 GLib.idle_add(lambda: progress.add_css_class("success"))
                 GLib.idle_add(lambda: status_label.set_text("✓ Success"))
-                GLib.idle_add(self.load_packages)
+                GLib.idle_add(self.update_package_status)
             else:
                 GLib.idle_add(lambda: progress.add_css_class("error"))
                 GLib.idle_add(lambda: status_label.set_text(f"✗ Error (exit code: {status})"))
@@ -1789,7 +2585,7 @@ class PkgMan(Adw.ApplicationWindow):
         def check_and_reopen():
             """Poll for installation completion and reopen settings"""
             def check_installation_complete():
-                if LAZY_AVAILABLE and check_pacman_contrib():
+                if check_pacman_contrib():
                     # pacman-contrib is now installed
                     self.show_settings(None)
                     return False  # Stop the timeout
@@ -1807,7 +2603,7 @@ class PkgMan(Adw.ApplicationWindow):
         """Show dialog with packages that have many dependencies"""
         # Create a new dialog window
         dialog = Adw.Window(title="Dependency Analysis", transient_for=self, modal=True)
-        dialog.set_default_size(700, 500)
+        dialog.set_default_size(800, 600)
 
         toolbar_view = Adw.ToolbarView()
         dialog.set_content(toolbar_view)
@@ -1825,14 +2621,8 @@ class PkgMan(Adw.ApplicationWindow):
         dialog.present()
 
         def analyze():
-            """Run analysis in background thread"""
-            if not LAZY_AVAILABLE:
-                GLib.idle_add(self.show_error, "Lazy module not available")
-                GLib.idle_add(dialog.close)
-                return
-
-            # Get packages with 50+ dependencies
-            heavy_packages = get_packages_with_many_deps(threshold=50)
+            # Get packages with 5+
+            heavy_packages = get_packages_with_many_deps(threshold=5)
 
             GLib.idle_add(self.display_dependency_results, toolbar_view, heavy_packages)
 
@@ -1931,7 +2721,7 @@ class PkgMan(Adw.ApplicationWindow):
 
     def handle_add_ignorepkg(self, button, package_name):
         """Add package to IgnorePkg"""
-        if LAZY_AVAILABLE and add_to_ignorepkg(package_name):
+        if add_to_ignorepkg(package_name):
             button.set_label("Added")
             button.set_sensitive(False)
             # Update button after 1 second
@@ -1941,7 +2731,7 @@ class PkgMan(Adw.ApplicationWindow):
 
     def handle_remove_ignorepkg(self, button, package_name):
         """Remove package from IgnorePkg"""
-        if LAZY_AVAILABLE and remove_from_ignorepkg(package_name):
+        if remove_from_ignorepkg(package_name):
             button.set_label("Removed")
             button.set_sensitive(False)
             # Update button after 1 second
@@ -1987,18 +2777,24 @@ class App(Adw.Application):
 
         self.window = PkgMan(self)
         self.window.set_icon_name("package-x-generic")
+        self.window.connect("destroy", lambda w: self.quit())
         self.window.present()
 
         # Open settings on first run
         if self.window.is_first_run():
             # Create the theme file so this only happens once
             self.window.save_theme_pref(False)  # Save dark as default
-            GLib.idle_add(lambda: self.window.show_settings(None) or False)
+            # Schedule settings to open after window is shown
+            def open_settings():
+                if self.window:
+                    self.window.show_settings(None)
+                return False
+            GLib.idle_add(open_settings)
 
-    def do_shutdown(self):
-        sys.exit()
 
 if __name__ == "__main__":
-    Adw.init()
-    App().run(sys.argv)
-    Adw.Application.do_shutdown(self)
+    try:
+        Adw.init()
+        App().run(sys.argv)
+    except KeyboardInterrupt:
+        sys.exit(0)
