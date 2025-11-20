@@ -21,6 +21,6 @@ Original [Grimaur](https://github.com/ryk4rd/grimaur) Credits @ryk4rd under MIT 
 <img width="804" height="605" alt="Screenshot_20251120_180958" src="https://github.com/user-attachments/assets/81367ca6-5ac7-42e5-a6a4-51f5ad6b3a93" />
 
 ### Settings (More...)
-Respects also **no-mouse usage**: arrows for minor sections and tab to move major sections, enter for click
+Respects also **no-mouse usage**: arrows/tab to move minor/major sections, enter for action and ESC to go back
 <img width="822" height="610" alt="Screenshot_20251120_181231" src="https://github.com/user-attachments/assets/a70412de-2370-468a-83ef-fe4cbcff5c6f" />
 
