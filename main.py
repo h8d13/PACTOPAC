@@ -1485,8 +1485,6 @@ class PkgMan(Adw.ApplicationWindow):
         try:
             grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
             cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'search', search_term]
-            if self.get_git_mirror_enabled():
-                cmd.append('--git-mirror')
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
             aur_packages = []
@@ -2073,6 +2071,7 @@ class PkgMan(Adw.ApplicationWindow):
                 if self.get_noconfirm_enabled():
                     cmd.append('--noconfirm')
                 if self.get_git_mirror_enabled():
+                    cmd.pop(5)
                     cmd.append('--git-mirror')
 
             # Print debug info
@@ -2098,8 +2097,6 @@ class PkgMan(Adw.ApplicationWindow):
             cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'update', '--global']
             if self.get_noconfirm_enabled():
                 cmd.append('--noconfirm')
-            if self.get_git_mirror_enabled():
-                cmd.append('--git-mirror')
             self.run_cmd(cmd)
         else:
             # Standard pacman update
@@ -2184,8 +2181,6 @@ class PkgMan(Adw.ApplicationWindow):
                     # For AUR packages, use grimaur inspect
                     grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
                     cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'inspect', pkg_name, '--full']
-                    if self.get_git_mirror_enabled():
-                        cmd.append('--git-mirror')
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
 
                 else:
