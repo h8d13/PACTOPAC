@@ -1325,12 +1325,14 @@ class PkgMan(Adw.ApplicationWindow):
                     pkg_name = pkg[0]
                     pkg_repo = pkg[1]
                     pkg_type = pkg[3] if len(pkg) > 3 else "pacman"
-
+                    
                     # Determine new installed status
                     if pkg_type == "aur":
                         is_installed = pkg_name in self.installed_aur
                     elif pkg_type == "flatpak":
-                        is_installed = pkg_name in installed_flatpak
+                        # For flatpaks, check using the application ID (index 4), not the display name
+                        pkg_app_id = pkg[4] if len(pkg) > 4 else None
+                        is_installed = pkg_app_id in installed_flatpak if pkg_app_id else False
                     else:  # pacman
                         is_installed = pkg_name in installed_pacman
 
@@ -2465,7 +2467,7 @@ class PkgMan(Adw.ApplicationWindow):
             if status == 0:
                 GLib.idle_add(lambda: progress.add_css_class("success"))
                 GLib.idle_add(lambda: status_label.set_text("✓ Success"))
-                GLib.idle_add(self.update_package_status)
+                GLib.timeout_add(500, self.update_package_status)
             else:
                 GLib.idle_add(lambda: progress.add_css_class("error"))
                 GLib.idle_add(lambda: status_label.set_text(f"✗ Error (exit code: {status})"))
