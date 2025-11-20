@@ -1,0 +1,49 @@
+# grimaur
+
+`grimaur` is a lightweight AUR helper that searches, builds, and updates AUR packages. It talks to the AUR RPC API by default and automatically falls back to the official git mirror when the endpoint is unavailable. 
+
+> [!TIP]
+> When the AUR is down, run commands with `--git-mirror` 
+> For example: `grimaur <package> --git-mirror` to bypass the RPC entirely, this ensures higher uptimes.
+
+## Install
+### Directly from the AUR
+   ```bash
+   git clone https://aur.archlinux.org/grimaur-git.git
+   cd grimaur-git
+   makepkg -si
+   ```
+
+### From the git mirror
+   ```bash
+   git clone --branch grimaur-git --single-branch https://github.com/archlinux/aur.git grimaur-git
+   cd grimaur-git
+   makepkg -si
+   ```
+### From Python directly
+   ```bash
+   git clone https://github.com/ryk4rd/grimaur
+   cd grimaur
+   python grimaur <command>
+   ```
+
+## Usage
+### Search Packages
+- `grimaur <term>` (or `grimaur search <term>`) lists matching packages and lets you pick one to install.
+- `grimaur list` to see installed "foreign" packages recognized by pacman
+
+### Inspect & Install & Remove Packages
+- `grimaur inspect <package> --full` Shows full depends
+- `grimaur install <package>` clones the repo, resolves dependencies, builds with `makepkg`
+   - Pass `--noconfirm` to skip confirmation prompts during the build/install steps.
+   - Pass `--git-mirror` to skip AUR RPC
+- `grimaur remove <package>` to uninstall from pacman
+   - Pass `--remove-cache` to delete cached files too
+
+### Stay Updated`
+- `grimaur update` rebuilds every installed “foreign” package that has a newer release.
+   - Pass `--global` to update system first, then AUR packages
+- `grimaur update <pkg1> <pkg2>` limits the update run to specific packages.
+- `grimaur update --devel` Update all *-git packages aswell (needed for grimaur-git for example).
+- Combine with `--refresh` to force a fresh pull of every tracked package.
+- New respects `IgnorePkg = x y z` from `/etc/pacman.conf`
