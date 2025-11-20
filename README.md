@@ -20,3 +20,5 @@ Original [Grimaur](https://github.com/ryk4rd/grimaur) Credits @ryk4rd under MIT 
 
 ### **Settings** (Many more options...)
 <img width="822" height="610" alt="Screenshot_20251120_181231" src="https://github.com/user-attachments/assets/a70412de-2370-468a-83ef-fe4cbcff5c6f" />
+
+### Respects also no-mouse usage: arrow/tab to move, enter for click
