@@ -9,7 +9,10 @@ sudo python3 main.py
 ---
 Can add an alias like `alias pacm='sudo -b python path/to/main.py; exit'`
 
+Please report bugs if you find some as UI code is annoying: [Here](https://github.com/h8d13/PACTOPAC/issues)
+
 Original [Grimaur](https://github.com/ryk4rd/grimaur) Credits @ryk4rd under MIT License.
+
 
 ## Previews
 ### Terminal Emulation
