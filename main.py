@@ -850,33 +850,6 @@ class PkgMan(Adw.ApplicationWindow):
         style_row.connect("notify::active", self.on_style_toggle)
         appearance_group.add(style_row)
 
-        resources_group = Adw.PreferencesGroup(title="Resources")
-        about_page.add(resources_group)
-
-        arch_news_row = Adw.ActionRow(
-            title="Arch Linux News",
-            subtitle="https://archlinux.org/news/"
-        )
-
-        arch_clipboard_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy to clipboard")
-        arch_clipboard_btn.set_valign(Gtk.Align.CENTER)
-        arch_clipboard_btn.connect("clicked", lambda b: self.copy_url_to_clipboard(b, "https://archlinux.org/news/"))
-        arch_news_row.add_suffix(arch_clipboard_btn)
-
-        resources_group.add(arch_news_row)
-
-        artix_news_row = Adw.ActionRow(
-            title="Artix Linux News",
-            subtitle="https://artixlinux.org/news.php"
-        )
-
-        artix_clipboard_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy to clipboard")
-        artix_clipboard_btn.set_valign(Gtk.Align.CENTER)
-        artix_clipboard_btn.connect("clicked", lambda b: self.copy_url_to_clipboard(b, "https://artixlinux.org/news.php"))
-        artix_news_row.add_suffix(artix_clipboard_btn)
-
-        resources_group.add(artix_news_row)
-
         dialog.present(self)
 
     def copy_url_to_clipboard(self, button, url):
