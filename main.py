@@ -807,7 +807,7 @@ class PkgMan(Adw.ApplicationWindow):
         # Add info about requirements
         requirements_row = Adw.ActionRow(
             title="Requirements",
-            subtitle="AUR packages need base-devel and git installed to build\nIt is your responsability to check PKGBUILD and use reputable pkgs."
+            subtitle="AUR packages need base-devel and git installed to build\nIt is your responsability to check PKGBUILD and use reputable pkgs.\nhttps://aur.archlinux.org/packages"
         )
         aur_group.add(requirements_row)
 
@@ -857,17 +857,13 @@ class PkgMan(Adw.ApplicationWindow):
             title="Arch Linux News",
             subtitle="https://archlinux.org/news/"
         )
-        arch_aur_row = Adw.ActionRow(
-            title="Arch Linux AUR",
-            subtitle="https://aur.archlinux.org/packages"
-        )
+
         arch_clipboard_btn = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy to clipboard")
         arch_clipboard_btn.set_valign(Gtk.Align.CENTER)
         arch_clipboard_btn.connect("clicked", lambda b: self.copy_url_to_clipboard(b, "https://archlinux.org/news/"))
         arch_news_row.add_suffix(arch_clipboard_btn)
 
         resources_group.add(arch_news_row)
-        resources_group.add(arch_aur_row)
 
         artix_news_row = Adw.ActionRow(
             title="Artix Linux News",
