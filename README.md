@@ -30,3 +30,6 @@ Respects also **no-mouse usage**: arrows/tab to move minor/major sections, enter
 
 <img width="802" height="635" alt="Screenshot_20251120_181231" src="https://github.com/user-attachments/assets/a70412de-2370-468a-83ef-fe4cbcff5c6f" />
 
+### 115+k packages
+
+Although if you count node, docker, runners/emulators, etc (subcounts) it would be much much more.
