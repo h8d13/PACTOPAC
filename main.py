@@ -804,6 +804,14 @@ class PkgMan(Adw.ApplicationWindow):
         remove_cache_row.connect("notify::active", self.on_remove_cache_toggle)
         aur_group.add(remove_cache_row)
 
+        # Custom dest-root path entry
+        dest_root_row = Adw.EntryRow(
+            title="Build Directory",
+        )
+        dest_root_row.set_text(self.get_aur_dest_root())
+        dest_root_row.connect("changed", self.on_dest_root_changed)
+        aur_group.add(dest_root_row)
+
         # Add info about requirements
         requirements_row = Adw.ActionRow(
             title="Requirements",
@@ -1004,6 +1012,23 @@ class PkgMan(Adw.ApplicationWindow):
         with open(config_file, 'w') as f:
             f.write("1" if enabled else "0")
 
+    def get_aur_dest_root(self):
+        """Get the custom dest-root path for AUR builds"""
+        try:
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/aur_dest_root"
+            with open(config_file) as f:
+                return f.read().strip()
+        except (FileNotFoundError, PermissionError, OSError):
+            return ""  # Default to empty (use grimaur default)
+
+    def set_aur_dest_root(self, path):
+        """Save AUR dest-root path to config"""
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "aur_dest_root")
+        with open(config_file, 'w') as f:
+            f.write(path)
+
     def get_noconfirm_enabled(self):
         """Check if noconfirm is enabled in config"""
         try:
@@ -1189,6 +1214,11 @@ class PkgMan(Adw.ApplicationWindow):
         """Handle remove cache toggle"""
         enabled = switch_row.get_active()
         self.set_remove_cache_enabled(enabled)
+
+    def on_dest_root_changed(self, entry_row):
+        """Handle dest-root path change"""
+        path = entry_row.get_text()
+        self.set_aur_dest_root(path)
 
     def on_noconfirm_toggle(self, switch_row, param):
         """Handle noconfirm toggle"""
@@ -1511,7 +1541,11 @@ class PkgMan(Adw.ApplicationWindow):
                     # Skip header lines
                     if 'search results' in line.lower():
                         continue
-                    
+
+                    # Skip "No matches found" message
+                    if 'no matches found' in line.lower():
+                        continue
+
                     # Match lines with numbering format: "NUMBER) package-name"
                     match = re.match(r'^(\d+)\)\s+(\S+)', line)
                     if not match:
@@ -2087,10 +2121,10 @@ class PkgMan(Adw.ApplicationWindow):
             else:
                 # Install AUR package
                 cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'install', pkg_name]
-                # TODO: Add this to config
-                #dest_root = "/tmp/pactopac/aur"
-                #cmd.extend(['--dest-root', dest_root])
-                
+                dest_root = self.get_aur_dest_root()
+                if dest_root:
+                    cmd.extend(['--dest-root', dest_root])
+
                 if self.get_noconfirm_enabled():
                     cmd.append('--noconfirm')
                 if self.get_git_mirror_enabled():
