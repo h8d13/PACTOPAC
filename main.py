@@ -1468,55 +1468,65 @@ class PkgMan(Adw.ApplicationWindow):
         """Search AUR packages using grimaur search"""
         if not self.check_grimaur() or not self.get_grimaur_enabled():
             return []
-
-        # Refresh installed AUR packages list before searching (always refresh to get current status)
+        
+        # Refresh installed AUR packages list before searching
         self.refresh_installed_aur()
-
-        # Check cache for search results (but we'll update installed status)
+        
+        # Check cache for search results
         if search_term in self.aur_search_cache:
             cached_results = self.aur_search_cache[search_term]
-            # Update installed status for cached results based on current installed_aur set
+            # Update installed status for cached results
             updated_results = []
             for pkg_name, repo, _, pkg_type in cached_results:
                 is_installed = pkg_name in self.installed_aur
                 updated_results.append((pkg_name, repo, is_installed, pkg_type))
-            # Update the cache with the new installed status
             self.aur_search_cache[search_term] = updated_results
             return updated_results
-
+        
         try:
             grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
-            cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'search', search_term]
+            cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, '--no-color', 'search', search_term]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
+            
             aur_packages = []
             if result.returncode == 0 and result.stdout.strip():
                 import re
-
+                
                 for line in result.stdout.strip().split('\n'):
-                    line = line.strip()
-
-                    # Skip empty lines, description lines (start with spaces), and header lines
-                    if not line or line.startswith('    ') or line.lower().startswith('search'):
+                    # CRITICAL: Check for numbering BEFORE stripping to detect indentation
+                    # Description lines start with spaces, package lines don't
+                    if not line or line[0].isspace():
+                        # Skip empty lines and lines that start with whitespace (descriptions)
                         continue
-
-                    # Remove numbering prefix like "1) " or "2) "
-                    line = re.sub(r'^\d+\)\s*', '', line)
-
-                    # Extract first word as package name
-                    parts = line.split()
-                    if parts:
-                        pkg_name = parts[0]
-
-                        # Validate package name format (alphanumeric, hyphens, underscores, dots, plus)
-                        if re.match(r'^[a-zA-Z0-9._+-]+$', pkg_name):
-                            # Check if it's installed
-                            is_installed = pkg_name in self.installed_aur
-                            aur_packages.append((pkg_name, "aur", is_installed, "aur"))
-
+                    
+                    # Now we can strip
+                    line = line.strip()
+                    
+                    # Skip header lines
+                    if 'search results' in line.lower() or not line:
+                        continue
+                    
+                    # Match lines with numbering format: "1) package-name ..."
+                    match = re.match(r'^(\d+)\)\s+(\S+)', line)
+                    if not match:
+                        continue
+                    
+                    # Extract package name (second capture group)
+                    pkg_name = match.group(2)
+                    
+                    # Validate package name format
+                    # Must be at least 2 chars and only contain valid package name characters
+                    if not re.match(r'^[a-zA-Z0-9._+-]{2,}$', pkg_name):
+                        continue
+                    
+                    # Check if it's installed
+                    is_installed = pkg_name in self.installed_aur
+                    aur_packages.append((pkg_name, "aur", is_installed, "aur"))
+            
             # Cache the results
             self.aur_search_cache[search_term] = aur_packages
             return aur_packages
+        
         except Exception as e:
             print(f"Error searching AUR: {e}")
             return []
