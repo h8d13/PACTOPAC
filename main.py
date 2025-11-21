@@ -1492,21 +1492,29 @@ class PkgMan(Adw.ApplicationWindow):
             if result.returncode == 0 and result.stdout.strip():
                 import re
                 
-                for line in result.stdout.strip().split('\n'):
-                    # CRITICAL: Check for numbering BEFORE stripping to detect indentation
-                    # Description lines start with spaces, package lines don't
-                    if not line or line[0].isspace():
-                        # Skip empty lines and lines that start with whitespace (descriptions)
+                for line in result.stdout.split('\n'):
+                    # Skip empty lines
+                    if not line:
                         continue
                     
-                    # Now we can strip
+                    # Description lines have 4+ spaces of indentation
+                    # Package lines have 0-1 spaces (for alignment of single-digit numbers)
+                    # Check if line starts with 2+ spaces or tab (description line)
+                    if line.startswith('  ') or line.startswith('\t'):
+                        continue
+                    
+                    # Now strip for processing
                     line = line.strip()
                     
-                    # Skip header lines
-                    if 'search results' in line.lower() or not line:
+                    # Skip empty lines after stripping
+                    if not line:
                         continue
                     
-                    # Match lines with numbering format: "1) package-name ..."
+                    # Skip header lines
+                    if 'search results' in line.lower():
+                        continue
+                    
+                    # Match lines with numbering format: "NUMBER) package-name"
                     match = re.match(r'^(\d+)\)\s+(\S+)', line)
                     if not match:
                         continue
@@ -1515,7 +1523,6 @@ class PkgMan(Adw.ApplicationWindow):
                     pkg_name = match.group(2)
                     
                     # Validate package name format
-                    # Must be at least 2 chars and only contain valid package name characters
                     if not re.match(r'^[a-zA-Z0-9._+-]{2,}$', pkg_name):
                         continue
                     
@@ -1523,6 +1530,8 @@ class PkgMan(Adw.ApplicationWindow):
                     is_installed = pkg_name in self.installed_aur
                     aur_packages.append((pkg_name, "aur", is_installed, "aur"))
             
+            # match how grimoir works
+            aur_packages.reverse()
             # Cache the results
             self.aur_search_cache[search_term] = aur_packages
             return aur_packages
