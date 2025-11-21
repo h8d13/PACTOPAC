@@ -258,6 +258,7 @@ class PkgMan(Adw.ApplicationWindow):
         self.running_processes = []  # Track running pacman/flatpak processes
         self.installed_aur = set()  # Track installed AUR packages
         self.aur_search_cache = {}  # Cache AUR search results
+        self.aur_votes_cache = {}  # Cache AUR package votes from search
         self.aur_total_count = None  # Cache total AUR package count
         self.aur_count_loading = False  # Flag to prevent duplicate count requests
         self.fuzzy_threshold = self.get_fuzzy_threshold()  # Fuzzy match threshold
@@ -1019,7 +1020,7 @@ class PkgMan(Adw.ApplicationWindow):
             with open(config_file) as f:
                 return f.read().strip()
         except (FileNotFoundError, PermissionError, OSError):
-            return ""  # Default to empty (use grimaur default)
+            return ""
 
     def set_aur_dest_root(self, path):
         """Save AUR dest-root path to config"""
@@ -1513,7 +1514,7 @@ class PkgMan(Adw.ApplicationWindow):
         
         try:
             grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
-            cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, '--no-color', 'search', search_term]
+            cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'search', '--no-interactive', '--no-color', search_term]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
             aur_packages = []
@@ -1521,6 +1522,9 @@ class PkgMan(Adw.ApplicationWindow):
                 import re
                 
                 for line in result.stdout.split('\n'):
+                    # Skip "No matches found" or similar messages
+                    if line.strip().lower().startswith('no '):
+                        continue
                     # Skip empty lines
                     if not line:
                         continue
@@ -1542,22 +1546,23 @@ class PkgMan(Adw.ApplicationWindow):
                     if 'search results' in line.lower():
                         continue
 
-                    # Skip "No matches found" message
-                    if 'no matches found' in line.lower():
-                        continue
-
                     # Match lines with numbering format: "NUMBER) package-name"
                     match = re.match(r'^(\d+)\)\s+(\S+)', line)
                     if not match:
                         continue
-                    
+
                     # Extract package name (second capture group)
                     pkg_name = match.group(2)
-                    
+
                     # Validate package name format
                     if not re.match(r'^[a-zA-Z0-9._+-]{2,}$', pkg_name):
                         continue
-                    
+
+                    # Extract votes from line like "[aur rpc, 14 votes]"
+                    votes_match = re.search(r'\[.*?(\d+)\s+votes', line)
+                    if votes_match:
+                        self.aur_votes_cache[pkg_name] = int(votes_match.group(1))
+
                     # Check if it's installed
                     is_installed = pkg_name in self.installed_aur
                     aur_packages.append((pkg_name, "aur", is_installed, "aur"))
@@ -2239,6 +2244,12 @@ class PkgMan(Adw.ApplicationWindow):
                     grimaur_path = os.path.join(os.path.dirname(__file__), 'grimaur-too/grimaur.py')
                     cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'inspect', pkg_name, '--full']
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+                    # Add votes info if available from search cache
+                    votes = self.aur_votes_cache.get(pkg_name)
+                    if votes is not None:
+                        info_with_votes = f"Votes           : {votes}\n{result.stdout}"
+                        GLib.idle_add(self.display_info, toolbar_view, info_with_votes)
+                        return
 
                 else:
                     result = subprocess.run(['pacman', '-Si', pkg_name], capture_output=True, text=True, check=True)

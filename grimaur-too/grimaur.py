@@ -815,9 +815,8 @@ def get_installed_version(package: str) -> str | None:
 
 def list_installed_packages() -> None:
     foreign = list_foreign_packages()
-    
+
     if not foreign:
-        print("No foreign packages installed")
         return
     
     print(style(f"Installed foreign packages ({len(foreign)}):", CYAN))
@@ -1180,7 +1179,6 @@ def update_packages(
     else:
         foreign = list_foreign_packages()
         if not foreign:
-            print("No foreign packages reported by pacman -Qm")
             return
         candidates = list(foreign.items())
 
@@ -1782,6 +1780,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable interactive selection and only list results",
     )
     search_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable coloured output",
+    )
+    search_parser.add_argument(
         "--noconfirm",
         action="store_true",
         help="Skip confirmation prompts when installing from search",
@@ -1921,7 +1924,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 limit=args.limit,
             )
             if not results:
-                print("No matches found", file=sys.stderr)
                 return 1
 
             ordered_results = order_search_results(results)
@@ -1939,7 +1941,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             selected = interactive_select_results(display_results)
             if not selected:
-                print(style("No packages selected.", DIM))
+                #print(style("No packages selected.", DIM))
                 return 0
 
             print(style("Installing selected packages:", CYAN))
