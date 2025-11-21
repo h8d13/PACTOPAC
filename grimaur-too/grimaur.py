@@ -62,6 +62,14 @@ def style(text: str, *codes: str) -> str:
     return "".join(codes) + text + RESET
 
 
+def remove_directory(path: Path) -> None:
+    """Remove a directory tree, elevating with sudo if needed."""
+    try:
+        shutil.rmtree(path)
+    except PermissionError:
+        subprocess.run(["sudo", "rm", "-rf", str(path)], check=True)
+
+
 def disable_aur_rpc(reason: str) -> None:
     """Switch to the git mirror backend when the RPC endpoint fails."""
     global USE_AUR_RPC, _RPC_FALLBACK_NOTIFIED
@@ -272,7 +280,7 @@ def ensure_clone(
 
     if package_dir.exists() and not (package_dir / ".git").is_dir():
         if force_reclone:
-            shutil.rmtree(package_dir)
+            remove_directory(package_dir)
         else:
             raise AurGitError(
                 f"Destination '{package_dir}' exists but is not a git repository. "
@@ -296,7 +304,7 @@ def ensure_clone(
                     )
                 except AurGitError:
                     if package_dir.exists():
-                        shutil.rmtree(package_dir)
+                        remove_directory(package_dir)
                     return ensure_clone(
                         package,
                         dest_root,
@@ -305,7 +313,7 @@ def ensure_clone(
                     )
             return package_dir
         if package_dir.exists():
-            shutil.rmtree(package_dir)
+            remove_directory(package_dir)
         run_command(["git", "clone", remote_url, str(package_dir)])
     else:
         if package_dir.exists() and (package_dir / ".git").is_dir() and not force_reclone:
@@ -315,7 +323,7 @@ def ensure_clone(
                     _reset_git_worktree(package_dir, (f"origin/{package}",))
                 except AurGitError:
                     if package_dir.exists():
-                        shutil.rmtree(package_dir)
+                        remove_directory(package_dir)
                     return ensure_clone(
                         package,
                         dest_root,
@@ -324,7 +332,7 @@ def ensure_clone(
                     )
             return package_dir
         if package_dir.exists():
-            shutil.rmtree(package_dir)
+            remove_directory(package_dir)
         run_command(
             [
                 "git",
@@ -1075,12 +1083,16 @@ def install_package(
     if package_dir is None:
         package_dir = ensure_clone(package, dest_root, refresh=refresh)
 
-    build_and_install(package_dir, noconfirm=noconfirm)
+    build_error: AurGitError | KeyboardInterrupt | None = None
+    try:
+        build_and_install(package_dir, noconfirm=noconfirm)
+    except (AurGitError, KeyboardInterrupt) as exc:
+        build_error = exc
 
     if clean:
         if package_dir.exists():
             print(f"Cleaning build artifacts: {package_dir}")
-            shutil.rmtree(package_dir)
+            remove_directory(package_dir)
         # Clean all visited dependency directories at the top level
         if is_toplevel:
             for dep_name in visited:
@@ -1089,7 +1101,10 @@ def install_package(
                 dep_dir = dest_root / dep_name
                 if dep_dir.exists():
                     print(f"Cleaning build artifacts: {dep_dir}")
-                    shutil.rmtree(dep_dir)
+                    remove_directory(dep_dir)
+
+    if build_error is not None:
+        raise build_error
 
 def remove_package(
     package: str,
@@ -1125,7 +1140,7 @@ def remove_package(
         package_dir = dest_root / package
         if package_dir.exists():
             print(f"Removing cached directory {package_dir}")
-            shutil.rmtree(package_dir)
+            remove_directory(package_dir)
             print(f"Removed cache for {style(package, GREEN)}")
         else:
             print(f"No cache found at {package_dir}")
