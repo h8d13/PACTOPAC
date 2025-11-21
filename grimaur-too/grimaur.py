@@ -966,7 +966,7 @@ def collect_missing_official_packages(
     return missing_official, unresolved
 
 
-def build_and_install(package_dir: Path, *, noconfirm: bool) -> None:
+def build_and_install(package_dir: Path, *, noconfirm: bool, clean: bool = False) -> None:
     pkgbuild_path = package_dir / "PKGBUILD"
     if not pkgbuild_path.exists():
         raise AurGitError(f"PKGBUILD missing at {pkgbuild_path}")
@@ -975,7 +975,8 @@ def build_and_install(package_dir: Path, *, noconfirm: bool) -> None:
         cmd.append("--noconfirm")
     print(f"Building {package_dir.name} with makepkg")
     run_command(cmd, cwd=package_dir)
-    print(f"Built package artifacts remain under {package_dir}")
+    if not clean:
+        print(f"Built package artifacts remain under {package_dir}")
     invalidate_installed_cache()
 
 
@@ -1085,7 +1086,7 @@ def install_package(
 
     build_error: AurGitError | KeyboardInterrupt | None = None
     try:
-        build_and_install(package_dir, noconfirm=noconfirm)
+        build_and_install(package_dir, noconfirm=noconfirm, clean=clean)
     except (AurGitError, KeyboardInterrupt) as exc:
         build_error = exc
 
