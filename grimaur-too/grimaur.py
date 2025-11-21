@@ -977,9 +977,11 @@ def install_package(
     *,
     refresh: bool,
     noconfirm: bool,
+    clean: bool = False,
     visited: set[str] | None = None,
     preinstalled_official: set[str] | None = None,
 ) -> None:
+    is_toplevel = visited is None
     visited = visited or set()
     if package in visited:
         return
@@ -1065,6 +1067,7 @@ def install_package(
             dest_root,
             refresh=refresh,
             noconfirm=noconfirm,
+            clean=clean,
             visited=visited,
             preinstalled_official=preinstalled_official,
         )
@@ -1073,6 +1076,20 @@ def install_package(
         package_dir = ensure_clone(package, dest_root, refresh=refresh)
 
     build_and_install(package_dir, noconfirm=noconfirm)
+
+    if clean:
+        if package_dir.exists():
+            print(f"Cleaning build artifacts: {package_dir}")
+            shutil.rmtree(package_dir)
+        # Clean all visited dependency directories at the top level
+        if is_toplevel:
+            for dep_name in visited:
+                if dep_name == package:
+                    continue
+                dep_dir = dest_root / dep_name
+                if dep_dir.exists():
+                    print(f"Cleaning build artifacts: {dep_dir}")
+                    shutil.rmtree(dep_dir)
 
 def remove_package(
     package: str,
@@ -1740,6 +1757,7 @@ def build_parser() -> argparse.ArgumentParser:
     install_parser = subparsers.add_parser("install", help="Resolve dependencies and build/install a package")
     install_parser.add_argument("package", help="Package name to install")
     install_parser.add_argument("--noconfirm", action="store_true", help="Pass --noconfirm to pacman/makepkg")
+    install_parser.add_argument("--clean", action="store_true", help="Remove build artifacts after successful install")
 
     remove_parser = subparsers.add_parser("remove", help="Remove an installed package")
     remove_parser.add_argument("package", help="Package name to remove")
@@ -1888,6 +1906,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dest_root,
                 refresh=refresh,
                 noconfirm=args.noconfirm,
+                clean=args.clean,
                 preinstalled_official=preinstalled_official,
             )
         elif args.command == "remove":

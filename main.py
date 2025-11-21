@@ -811,6 +811,15 @@ class PkgMan(Adw.ApplicationWindow):
         remove_cache_row.connect("notify::active", self.on_remove_cache_toggle)
         aur_group.add(remove_cache_row)
 
+        # Clean after install toggle
+        clean_after_install_row = Adw.SwitchRow(
+            title="Clean After Install",
+            subtitle="Remove build artifacts after successful AUR install"
+        )
+        clean_after_install_row.set_active(self.get_clean_after_install_enabled())
+        clean_after_install_row.connect("notify::active", self.on_clean_after_install_toggle)
+        aur_group.add(clean_after_install_row)
+
         # Custom dest-root path entry
         dest_root_row = Adw.EntryRow(
             title="Build Directory",
@@ -1019,6 +1028,23 @@ class PkgMan(Adw.ApplicationWindow):
         with open(config_file, 'w') as f:
             f.write("1" if enabled else "0")
 
+    def get_clean_after_install_enabled(self):
+        """Check if clean after install is enabled in config"""
+        try:
+            config_file = f"/home/{self.sudo_user}/.config/pactopac/clean_after_install"
+            with open(config_file) as f:
+                return f.read().strip() == "1"
+        except (FileNotFoundError, PermissionError, OSError):
+            return False
+
+    def set_clean_after_install_enabled(self, enabled):
+        """Save clean after install state to config"""
+        config_dir = f"/home/{self.sudo_user}/.config/pactopac"
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "clean_after_install")
+        with open(config_file, 'w') as f:
+            f.write("1" if enabled else "0")
+
     def get_aur_dest_root(self):
         """Get the custom dest-root path for AUR builds"""
         try:
@@ -1221,6 +1247,11 @@ class PkgMan(Adw.ApplicationWindow):
         """Handle remove cache toggle"""
         enabled = switch_row.get_active()
         self.set_remove_cache_enabled(enabled)
+
+    def on_clean_after_install_toggle(self, switch_row, param):
+        """Handle clean after install toggle"""
+        enabled = switch_row.get_active()
+        self.set_clean_after_install_enabled(enabled)
 
     def on_dest_root_changed(self, entry_row):
         """Handle dest-root path change"""
@@ -2127,23 +2158,29 @@ class PkgMan(Adw.ApplicationWindow):
             pkg_name = self.selected[0]
             if installed:
                 # Remove AUR package
-                cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'remove', pkg_name]
+                cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path]
+                dest_root = self.get_aur_dest_root()
+                if dest_root:
+                    cmd.extend(['--dest-root', dest_root])
+                cmd.extend(['remove', pkg_name])
                 if self.get_remove_cache_enabled():
                     cmd.append('--remove-cache')
                 if self.get_noconfirm_enabled():
                     cmd.append('--noconfirm')
             else:
                 # Install AUR package
-                cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'install', pkg_name]
+                cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path]
                 dest_root = self.get_aur_dest_root()
                 if dest_root:
                     cmd.extend(['--dest-root', dest_root])
+                cmd.extend(['install', pkg_name])
 
                 if self.get_noconfirm_enabled():
                     cmd.append('--noconfirm')
+                if self.get_clean_after_install_enabled():
+                    cmd.append('--clean')
                 if self.get_git_mirror_enabled():
-                    cmd.pop(5)
-                    cmd.append('--git-mirror')
+                    cmd.insert(5, '--git-mirror')
 
             # Print debug info
             print(f"Running AUR command: {' '.join(cmd)}")
