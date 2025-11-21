@@ -513,9 +513,15 @@ class PkgMan(Adw.ApplicationWindow):
         filter_box.set_margin_end(12)
         filter_box.set_margin_top(6)
 
-        self.filter_label = Gtk.Label(label="Filter: Installed", halign=Gtk.Align.START, hexpand=True)
+        self.filter_label = Gtk.Label(label="Filter: System", halign=Gtk.Align.START, hexpand=True)
         self.filter_label.add_css_class("dim-label")
         filter_box.append(self.filter_label)
+
+        # Installed only toggle
+        self.installed_only_toggle = Gtk.CheckButton(label="Installed")
+        self.installed_only_toggle.set_active(True)
+        self.installed_only_toggle.connect("toggled", self.on_installed_toggle)
+        filter_box.append(self.installed_only_toggle)
 
         self.filter_button = Gtk.MenuButton(icon_name="view-more-symbolic")
         self.filter_button.set_tooltip_text("Change filter")
@@ -530,9 +536,9 @@ class PkgMan(Adw.ApplicationWindow):
         popover_box.set_margin_end(6)
 
         # Create filter buttons
-        installed_btn = Gtk.Button(label="Installed", halign=Gtk.Align.FILL)
-        installed_btn.connect("clicked", lambda b: self.change_filter("installed", popover))
-        popover_box.append(installed_btn)
+        system_btn = Gtk.Button(label="System", halign=Gtk.Align.FILL)
+        system_btn.connect("clicked", lambda b: self.change_filter("installed", popover))
+        popover_box.append(system_btn)
 
         flatpak_btn = Gtk.Button(label="Flatpak", halign=Gtk.Align.FILL)
         flatpak_btn.connect("clicked", lambda b: self.change_filter("flatpak", popover))
@@ -541,10 +547,6 @@ class PkgMan(Adw.ApplicationWindow):
         aur_btn = Gtk.Button(label="AUR", halign=Gtk.Align.FILL)
         aur_btn.connect("clicked", lambda b: self.change_filter("aur", popover))
         popover_box.append(aur_btn)
-
-        available_btn = Gtk.Button(label="Available", halign=Gtk.Align.FILL)
-        available_btn.connect("clicked", lambda b: self.change_filter("available", popover))
-        popover_box.append(available_btn)
 
         all_btn = Gtk.Button(label="All", halign=Gtk.Align.FILL)
         all_btn.connect("clicked", lambda b: self.change_filter("all", popover))
@@ -612,16 +614,20 @@ class PkgMan(Adw.ApplicationWindow):
 
         # Update filter label
         filter_names = {
-            "installed": "Installed",
+            "installed": "System",
             "flatpak": "Flatpak",
             "aur": "AUR",
-            "available": "Available",
             "all": "All"
         }
         self.filter_label.set_label(f"Filter: {filter_names.get(filter_name, filter_name)}")
 
         # Close popover
         popover.popdown()
+
+    def on_installed_toggle(self, toggle):
+        """Handle installed only toggle change"""
+        self.current_page = 0
+        self.refresh_list()
 
     def show_settings(self, button):
         dialog = Adw.PreferencesDialog()
@@ -1587,10 +1593,11 @@ class PkgMan(Adw.ApplicationWindow):
         self.current_page = 0
         search_text = search_entry.get_text().strip()
 
-        # When searching, automatically switch to All tab
+        # When searching, automatically switch to All tab and uncheck installed filter
         if search_text:
             self.view_stack.set_visible_child_name("all")
             self.filter_label.set_label("Filter: All")
+            self.installed_only_toggle.set_active(False)
 
             # Trigger async AUR search if enabled
             if self.check_grimaur() and self.get_grimaur_enabled():
@@ -1700,41 +1707,43 @@ class PkgMan(Adw.ApplicationWindow):
                 current_list.remove(child)
 
         search_text = self.search.get_text()
+        installed_only = self.installed_only_toggle.get_active()
 
         # Filter packages based on search and tab with fuzzy matching
         matches_with_scores = []
 
         if self.current_tab == "installed":
-            # Show installed pacman packages only
+            # Show pacman/system packages
             for p in self.packages:
-                if p[2] and len(p) > 3 and p[3] == "pacman":
-                    matches, score = self.fuzzy_match(search_text, p[0])
-                    if matches:
-                        matches_with_scores.append((p, score))
-        elif self.current_tab == "available":
-            # Show available packages (not installed)
-            for p in self.packages:
-                if not p[2]:
+                if len(p) > 3 and p[3] == "pacman":
+                    if installed_only and not p[2]:
+                        continue
                     matches, score = self.fuzzy_match(search_text, p[0])
                     if matches:
                         matches_with_scores.append((p, score))
         elif self.current_tab == "flatpak":
-            # Show installed flatpak packages only
+            # Show flatpak packages
             for p in self.packages:
-                if p[2] and len(p) > 3 and p[3] == "flatpak":
+                if len(p) > 3 and p[3] == "flatpak":
+                    if installed_only and not p[2]:
+                        continue
                     matches, score = self.fuzzy_match(search_text, p[0])
                     if matches:
                         matches_with_scores.append((p, score))
         elif self.current_tab == "aur":
-            # Show all AUR packages (installed and available from search)
+            # Show AUR packages
             for p in self.packages:
                 if len(p) > 3 and p[3] == "aur":
+                    if installed_only and not p[2]:
+                        continue
                     matches, score = self.fuzzy_match(search_text, p[0])
                     if matches:
                         matches_with_scores.append((p, score))
         else:  # all tab
-            # Show all packages (installed and available)
+            # Show all packages
             for p in self.packages:
+                if installed_only and not p[2]:
+                    continue
                 matches, score = self.fuzzy_match(search_text, p[0])
                 if matches:
                     matches_with_scores.append((p, score))
