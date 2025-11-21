@@ -924,8 +924,6 @@ class PkgMan(Adw.ApplicationWindow):
         if response == "partial":
             # paccache -r: removes old versions, keeps last 3 of each package
             cmd = ['paccache', '-r']
-            if self.get_noconfirm_enabled():
-                cmd.append('--noconfirm')
             self.run_cmd(cmd)
         elif response == "full":
             # pacman -Scc: removes all cached packages
@@ -2089,6 +2087,10 @@ class PkgMan(Adw.ApplicationWindow):
             else:
                 # Install AUR package
                 cmd = ['sudo', '-u', self.sudo_user, 'python3', grimaur_path, 'install', pkg_name]
+                # TODO: Add this to config
+                #dest_root = "/tmp/pactopac/aur"
+                #cmd.extend(['--dest-root', dest_root])
+                
                 if self.get_noconfirm_enabled():
                     cmd.append('--noconfirm')
                 if self.get_git_mirror_enabled():
